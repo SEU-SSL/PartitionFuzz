@@ -10,4 +10,4 @@ Implemented based on AFL++ 4.21
 
 **Collaborative Scheduling** To achieve global optimization, PartitionFuzz introduces *domain-aware* collaborative scheduling mechanisms. *Selective synchronization* shares only seeds that fall outside a local subdomain, effectively reducing synchronization overhead. In addition, *delegate fuzzing* dynamically redistributes seeds among slave instances to balance workloads, ensuring efficient utilization of parallel resources while maintaining subdomain integrity.
 
-[Supplementary Results of Experiments are also avaiable](experiment/ExperimentalResults.pdf)
+<!-- [Supplementary Results of Experiments are also avaiable](experiment/ExperimentalResults.pdf) -->
