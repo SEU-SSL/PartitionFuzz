@@ -693,7 +693,7 @@ void afl_fsrv_start(afl_forkserver_t *fsrv, char **argv,
     u32 tmp_map_size =
         fsrv->nyx_handlers->nyx_get_bitmap_buffer_size(fsrv->nyx_runner);
     fsrv->real_map_size = tmp_map_size;
-    fsrv->map_size = (((tmp_map_size + 63) >> 6) << 6); // 64 
+    fsrv->map_size = (((tmp_map_size + 63) >> 6) << 6); // 64 倍数
     if (!be_quiet) { ACTF("Target map size: %u", fsrv->real_map_size); }
 
     fsrv->trace_bits =

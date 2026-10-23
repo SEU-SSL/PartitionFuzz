@@ -822,7 +822,7 @@ void read_testcases(afl_state_t *afl, u8 *directory) {
       add_to_queue(afl, fn2, st.st_size >= MAX_FILE ? MAX_FILE : st.st_size,
                    passed_det);
 
-      // 
+      // 标记初始种子不用同步
       afl->queue_top->not_sync = 1;
 
       if (unlikely(afl->shm.cmplog_mode)) {
@@ -943,7 +943,7 @@ void perform_dry_run(afl_state_t *afl) {
 
     res = calibrate_case(afl, q, use_mem, 0, 1);
 
-    /* trace_mini */
+    /* 计算trace_mini */
     if (!q->trace_mini) q->trace_mini = (u8 *)ck_alloc(afl->fsrv.map_size >> 3);
     minimize_bits(afl, q->trace_mini, afl->fsrv.trace_bits);
 

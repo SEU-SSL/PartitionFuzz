@@ -559,8 +559,20 @@ u8 fuzz_one_original(afl_state_t *afl) {
 
     struct queue_entry *q = afl->queue_cur;
 
+    /* 0319 前期d影响小，后期d影响大，效果不错，但是有边界问题.
+    power_factor巨大无比。 也存在min_total_energy为无穷小 */
+
+    // 原因1：不在候选集内？归一化的d不在0-1之间？有大约15 16
+    // 原因2：DBL_MIN和DBL_MAX的问题，没有走到更新流程
+    /**
+     * 进行能量调整的条件：
+     *    1. 子节点
+     *    2. 有任务了
+     *    3. 进行种子选择了
+     *    4. 不是负载均衡任务
+     */
     if (afl->is_secondary_node && afl->sd.center && afl->max_total_energy &&
-        !afl->fuzz_LB_seed) {  // 
+        !afl->fuzz_LB_seed) {  // 仅子节点进行能量调整
 
       struct queue_entry *q = afl->queue_cur;
 
@@ -570,7 +582,7 @@ u8 fuzz_one_original(afl_state_t *afl) {
 
       double progress_to_tx_t = pow(((double)t) / ((double)100 * 60.0), 0.5);
       // double progress_to_tx = ((double)t) / ((double)100 * 60.0);  // 100min
-      // ，d；d
+      // 前期或测试次数很多的时候趋向于默认，d影响小；后期d作用更大
       double progress_to_tx_e = 1 - (q->total_energy / afl->max_total_energy);
       double progress_to_tx = progress_to_tx_t;
 
@@ -582,7 +594,7 @@ u8 fuzz_one_original(afl_state_t *afl) {
       double normalized_f = 0.0;
 
       if (q->min_dist_ES > 0 &&
-          afl->max_dist_to_ES != DBL_MAX) {  // 
+          afl->max_dist_to_ES != DBL_MAX) {  // 仅针对候选集种子变化能量
 
         // when "max_distance == min_distance", we set the
         // normalized_d to 0 so that we can sufficiently
@@ -590,7 +602,7 @@ u8 fuzz_one_original(afl_state_t *afl) {
 
         if (afl->max_dist_to_ES != afl->min_dist_to_ES) {
 
-          // 
+          // 只针对候选集进行能量调整
           normalized_d = (q->min_dist_ES - afl->min_dist_to_ES) /
                          (afl->max_dist_to_ES - afl->min_dist_to_ES);
 
@@ -616,7 +628,7 @@ u8 fuzz_one_original(afl_state_t *afl) {
 
       }
 
-      if (q->perf_score < 1.0) q->perf_score = 100;  // 0
+      if (q->perf_score < 1.0) q->perf_score = 100;  // 到0的还有机会复活
       q->perf_score *= power_factor;
 
       /* Make sure that we don't go over limit. */
@@ -650,10 +662,10 @@ u8 fuzz_one_original(afl_state_t *afl) {
 
     }
 
-    /* 0320 d，d， */
+    /* 0320 d影响大，后期d影响小，恢复默认的 */
 
     // if (afl->is_secondary_node &&
-    //     afl->max_total_energy) {  // 
+    //     afl->max_total_energy) {  // 仅子节点进行能量调整
 
     //   struct queue_entry *q = afl->queue_cur;
 
@@ -664,14 +676,14 @@ u8 fuzz_one_original(afl_state_t *afl) {
     //   double progress_to_tx = pow(((double)t) / ((double)100 * 60.0), 0.5);
     //   // double progress_to_tx = ((double)t) / ((double)100 * 60.0);  //
     //   100min
-    //   // d，d
+    //   // 前期完全由d决定，后期测得多了消减d的作用
     //   progress_to_tx *= 1 - (q->total_energy / afl->max_total_energy);
 
     //   double T;
     //   T = 1.0 / pow(20.0, progress_to_tx);
 
     //   double power_factor = 1.0;
-    //   if (q->min_dist_ES > 0) {  // 
+    //   if (q->min_dist_ES > 0) {  // 仅针对候选集种子变化能量
 
     //     // when "max_distance == min_distance", we set the
     //     // normalized_d to 0 so that we can sufficiently
@@ -680,7 +692,7 @@ u8 fuzz_one_original(afl_state_t *afl) {
 
     //     if (afl->max_dist_to_ES != afl->min_dist_to_ES) {
 
-    //       // 
+    //       // 只针对候选集进行能量调整
     //       normalized_d = (q->min_dist_ES - afl->min_dist_to_ES) /
     //                      (afl->max_dist_to_ES - afl->min_dist_to_ES);
     //     }
@@ -728,13 +740,13 @@ u8 fuzz_one_original(afl_state_t *afl) {
 
     /*   // if (afl->is_secondary_node) {
 
-      //   // 
-      //   if (q->is_top_k) {  //  5-10
+      //   // 调整能量
+      //   if (q->is_top_k) {  // 稀疏区域扩充能量 5-10倍数
       //     q->perf_score *= ((q->priority + 1) * 5);
       //   }
 
-      //   // ， 0.1-10
-      //   if (q->gain == 0.0) {  // 
+      //   // 投入产出比稀释能量，扩充 0.1-10
+      //   if (q->gain == 0.0) {  // 没测过不干预
       //   } else {
 
       //     double n_gain =
@@ -744,8 +756,8 @@ u8 fuzz_one_original(afl_state_t *afl) {
       //                             (afl->max_total_energy -
       afl->min_total_energy);
 
-      //     // ，
-      //     // ， 0 1 
+      //     // 测的次数不少了，且没有产出
+      //     // 可能的问题，只有 0 1 分布这种
       //     if (n_total_energy > 0.9 && n_gain < 0.5) {
 
       //       q->perf_score /= 20;
@@ -758,10 +770,10 @@ u8 fuzz_one_original(afl_state_t *afl) {
     //                                                      /* AFLGo modify */
     // // static u32 t_x = 10;    /* Time to exploitation (Default: 10 min) */
 
-    // if (q->is_top_k) q->perf_score *= 5;  //  50% ， 5
-    // 
+    // if (q->is_top_k) q->perf_score *= 5;  // 前 50% 稀疏的种子，无条件扩充 5
+    // 倍
 
-    // if (afl->is_secondary_node) { // 
+    // if (afl->is_secondary_node) { // 仅子节点进行能量调整
 
     //   struct queue_entry *q = afl->queue_cur;
 
@@ -782,7 +794,7 @@ u8 fuzz_one_original(afl_state_t *afl) {
     //   // T = 1.0 / (1.0 + 19.0 * pow(progress_to_tx, 2));
 
     //   double power_factor = 1.0;
-    //   if (q->total_energy > 0) {  // fuzz
+    //   if (q->total_energy > 0) {  // 仅针对fuzz过的种子进行能量调整
 
     //     // when "max_distance == min_distance", we set the
     //     // normalized_d to 0 so that we can sufficiently
@@ -3772,7 +3784,7 @@ abandon_entry:
   // afl->queue_cur->contribute += (afl->queued_items - queued_items_before);
 
   orig_in = NULL;
-  // force_fuzz  return 1，
+  // force_fuzz 不能 return 1，会卡在内层循环
   if (afl->fuzz_LB_seed)
     return 0;
   else
@@ -6547,4 +6559,3 @@ u8 fuzz_one(afl_state_t *afl) {
   return (key_val_lv_1 | key_val_lv_2);
 
 }
-

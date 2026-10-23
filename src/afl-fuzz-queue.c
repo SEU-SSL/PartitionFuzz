@@ -69,11 +69,13 @@ void create_alias_table(afl_state_t *afl) {
 
   u32 last_dist_queue_buf_len = afl->last_dist_queue_buf_len;
 
+  // 10分钟一次
   if (afl->is_secondary_node &&
       afl->now_time - afl->last_priority_time > 600000 &&
       last_dist_queue_buf_len > afl->last_adjust_dist_len) {
 
-    u32 not_fuzzed_num = 0, fuzzed_num = 0;
+    // 所有种子 = fuzzed(disabled) + not_fuzzed
+    u32 not_fuzzed_num = 0, fuzzed_num = 0;  // 不包含disabled
     u32 disabled_num = 0;
     u32 favored_num = 0;
 
@@ -85,6 +87,7 @@ void create_alias_table(afl_state_t *afl) {
 
       if (q->disabled) continue;
 
+      // 计数候选集（favored || (not_fuzz & in_subdomain)）
       if ((q->in_subdomain && !q->was_fuzzed) || q->favored)
         afl->candidate_set_size++;
 
@@ -114,24 +117,24 @@ void create_alias_table(afl_state_t *afl) {
     }
 
     disabled_num = last_dist_queue_buf_len - fuzzed_num - not_fuzzed_num;
-    printf("    (size=%u), dist seed num: %u/%u (%u disabled)\n",
+    printf("    重构候选集(size=%u), dist seed num: %u/%u (%u disabled)\n",
            afl->candidate_set_size, last_dist_queue_buf_len, afl->queued_items,
            disabled_num);
 
-    /* ARTfavored */
+    /* 围绕ART原点重新选择favored种子 */
 
-    // 1. ART（）
-    // not_fuzzed, fuzzed, FSCSART
-    // fuzz,,
-    // FSCSART(,)
+    // 1. 确定ART原点（排序选择最稀疏的）
+    // not_fuzzed作为候选集, fuzzed作为测试集, 根据FSCS选出下一个作为ART原点
+    // 都已经fuzz过了,候选集与执行集相同,
+    // 根据FSCS选出下一个作为ART原点(最近距离最大的,稀疏的)
 
     /****************************************
      *
-     * （）！
+     * 种子中距离测试集远的（稀疏的）加权！
      *
      ***************************************/
 
-    // 1. 、
+    // 1. 构建候选集、测试集
 
     // afl->candidate_set_size = not_fuzzed_num + favored_num;
     afl->candidate_set =
@@ -146,7 +149,7 @@ void create_alias_table(afl_state_t *afl) {
       //   continue;
       if (q->disabled) continue;
 
-      // ： && fuzz ， favored
+      // 候选集：子域内 && 没有被fuzz ， 或者favored
       if ((q->in_subdomain && !q->was_fuzzed) || q->favored) {
 
         q->state = CANDIDATE;
@@ -168,12 +171,12 @@ void create_alias_table(afl_state_t *afl) {
       double min_d = DBL_MAX;
       for (u32 j = 0; j < last_dist_queue_buf_len; j++) {
 
-        // （was_fuzzed & in_subdomain）
+        // 只看执行集（was_fuzzed & in_subdomain）
         if (!afl->queue_buf[j]->was_fuzzed || afl->queue_buf[j]->disabled ||
             !afl->queue_buf[j]->in_subdomain)
           continue;
 
-        // ：fuzz && disabled && 
+        // 执行集：被fuzz了 && 不是disabled && 在子域内
         double dist =
             get_distance_from_matrix(afl, afl->candidate_set[i]->id, j);
 
@@ -195,7 +198,7 @@ void create_alias_table(afl_state_t *afl) {
 
     }
 
-    // // ，
+    // // 归一化分段加权，越大越远
     // // 0-0.25, 0.25-0.5, 0.5-0.75, 0.75-1
     // for (u32 i = 0; i < afl->candidate_set_size; i++) {
 
@@ -204,7 +207,7 @@ void create_alias_table(afl_state_t *afl) {
     //       (max_min_dist_ES - min_min_dist_ES);
     // }
 
-    // 
+    // 排序
     for (u32 i = 0; i < afl->candidate_set_size; i++) {
 
       struct queue_entry *q = afl->candidate_set[i];
@@ -240,7 +243,7 @@ void create_alias_table(afl_state_t *afl) {
 
     quickSort(afl->candidate_set, 0, afl->candidate_set_size - 1);
 
-    //  50% ,  50%, 30% 
+    // 前 50% 加权, 后 50%, 30% 概率随机启用确定性变异
     u32 half = afl->candidate_set_size >> 1;
     for (u32 i = 0; i < afl->candidate_set_size; i++) {
 
@@ -259,7 +262,7 @@ void create_alias_table(afl_state_t *afl) {
 
       } else if (!afl->candidate_set[i]->passed_det &&
 
-                 rand_below(afl, 100) > 70) {  // 30%
+                 rand_below(afl, 100) > 70) {  // 30%概率启用确定性变异
 
         afl->candidate_set[i]->use_det = 1;
 
@@ -319,12 +322,12 @@ void create_alias_table(afl_state_t *afl) {
         avg_len += q->len;
         ++active;
 
-        // , 0 => contribute
-        if (q->total_energy == 0.0) {  // ，
+        // 投入产出比, 大概率是0 => 所有contribute加一
+        if (q->total_energy == 0.0) {  // 种子还没被执行过，不干预
 
           // q->gain = 0.0;
 
-        } else {  // 0
+        } else {  // 执行过的收益一定大于0
 
           // q->gain = (q->contribute + 1) / q->total_energy;
           // afl->min_gain = MIN(q->gain, afl->min_gain);
@@ -988,11 +991,11 @@ void destroy_queue(afl_state_t *afl) {
 
 void update_bitmap_score(afl_state_t *afl, struct queue_entry *q) {
 
-  // update_bitmap_score, 
+  // 多次使用update_bitmap_score更新种子选择, 可能引入禁用的初始种子
   if (q->disabled) { return; }
 
-  /*  */
-  if (afl->sd.center) {  // 
+  /* 任务约束的种子选择 */
+  if (afl->sd.center) {  // 子域内种子选择
 
     if (!q->in_subdomain) { return; }
 

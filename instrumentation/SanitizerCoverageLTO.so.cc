@@ -1376,12 +1376,12 @@ Function *returnOnlyCaller(Function *F) {
 
 std::string getSourceFilePath(const llvm::Function &F) {
 
-  if (auto *SP = F.getSubprogram()) {  // 
-    if (auto *File = SP->getFile()) {  // DIFile
+  if (auto *SP = F.getSubprogram()) {  // 获取函数的调试子程序
+    if (auto *File = SP->getFile()) {  // 获取关联的DIFile
       llvm::SmallString<128> Dir(File->getDirectory());
       llvm::SmallString<128> FileName(File->getFilename());
 
-      // （）
+      // 处理路径拼接（可能需要绝对路径）
       llvm::sys::fs::make_absolute(Dir);
       llvm::sys::path::append(Dir, FileName);
       return Dir.str().str();
@@ -1390,7 +1390,7 @@ std::string getSourceFilePath(const llvm::Function &F) {
 
   }
 
-  return "unknown";  // 
+  return "unknown";  // 无调试信息时的默认值
 
 }
 
@@ -2011,12 +2011,12 @@ void ModuleSanitizerCoverageLTO::instrumentFunction(
   InjectCoverage(F, BlocksToInstrument, IsLeafFunc);
   // InjectCoverageForIndirectCalls(F, IndirCalls);
 
-  // 
+  // 分析桩点后置桩点数量
   for (BasicBlock *InstrumentBlock : BlocksToInstrument) {
 
     const BasicBlock *start = InstrumentBlock;
-    // 
-    std::stack<const BasicBlock *> worker;  // ，
+    // 遍历查找后继桩点
+    std::stack<const BasicBlock *> worker;  // 先入后出，深度优先
     std::unordered_set<const BasicBlock *> visited;
 
     worker.push(start);
@@ -2037,7 +2037,7 @@ void ModuleSanitizerCoverageLTO::instrumentFunction(
 
           visited.insert(succ);
           worker.push(succ);
-          if (succ_map.find(succ) != succ_map.end())  // key，
+          if (succ_map.find(succ) != succ_map.end())  // key存在，后继是桩点
             succ_map[start].push_back(instrument_point_map[succ]);
 
         }
@@ -2048,7 +2048,7 @@ void ModuleSanitizerCoverageLTO::instrumentFunction(
 
   }
 
-  // 
+  // 可读输出
   if (!outFile.is_open()) {
 
     std::cerr << "Error opening the file!" << std::endl;
@@ -2071,7 +2071,7 @@ void ModuleSanitizerCoverageLTO::instrumentFunction(
 
   }
 
-  // 
+  // 可读输出
   if (!outFile1.is_open()) {
 
     std::cerr << "Error opening the file!" << std::endl;
@@ -2096,10 +2096,10 @@ void ModuleSanitizerCoverageLTO::instrumentFunction(
 
   }
 
-  // 
+  // 二进制写进文件以提高效率
   if (!out_file) {
 
-    // 
+    // 处理文件打开失败
     return;
 
   }
@@ -2109,15 +2109,15 @@ void ModuleSanitizerCoverageLTO::instrumentFunction(
     const BasicBlock            *key = pair.first;
     const std::vector<uint32_t> &vec = pair.second;
 
-    // （4 ）
+    // 写入键（4 字节）
     out_file.write(reinterpret_cast<const char *>(&(instrument_point_map[key])),
                    sizeof(int));
 
-    //  vector （size_t， 4  8 ）
+    // 写入 vector 的长度（size_t，固定为 4 或 8 字节）
     size_t vec_size = vec.size();
     out_file.write(reinterpret_cast<const char *>(&vec_size), sizeof(size_t));
 
-    //  vector （ 4 ）
+    // 写入 vector 中的每个元素（每个 4 字节）
     out_file.write(reinterpret_cast<const char *>(vec.data()),
                    vec_size * sizeof(int));
 
@@ -2368,7 +2368,7 @@ void ModuleSanitizerCoverageLTO::InjectCoverageAtBlock(Function   &F,
 
     }
 
-    // 
+    // 记录基本块和桩点序号的关系
     instrument_point_map[&BB] = afl_global_id;
 
     /* Set the ID of the inserted basic block */

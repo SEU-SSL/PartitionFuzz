@@ -217,10 +217,10 @@ struct queue_entry {
   // double gain;
 
   u8     use_det;
-  u8     is_top_k;                                               /*  */
-  double min_dist_ES;                                         /*  */
-  double fav_factor;                                         /* AFL++ */
-  double priority;                                       /* AFL++ */
+  u8     is_top_k;                                               /* 需要加权的部分 */
+  double min_dist_ES;                                         /* 距离执行集的最小距离 */
+  double fav_factor;                                         /* AFL++种子选择因子 */
+  double priority;                                       /* 距离结合AFL++选择的优先级 */
 
   double aggregation;               /* client: local aggregation degree     */
   u8     in_subdomain;              /* client: if in cur subdomain          */
@@ -913,19 +913,38 @@ typedef struct afl_state {
   u32   bitsmap_size;
 #endif
 
-  struct queue_entry **dist_queue_buf;       /* for asyn calculate distance */
+  struct queue_entry **dist_queue_buf;            /* distance queue snapshot */
   u32                  dist_queue_buf_len;         /* dist_queue_buf length */
   u32                  last_dist_queue_buf_len;    /* distance ready to use */
 
   struct queue_entry **select_queue_buf;               /* sort for priority */
   u32                  select_queued_items;      /* select_queue_buf length */
 
-  double    **distance_matrix_cache;                      /* distance cache */
-  u32         matrix_row_to_free;                     /* record for release */
-  atomic_bool cal_dist_matrix;            /* is calculating distance matrix */
+  double **distance_matrix_cache;                         /* distance cache */
+  u32      matrix_row_to_free;                        /* record for release */
 
-  pthread_mutex_t dist_cond_mutex;      /* lock(wait) for update distMatrix */
-  pthread_cond_t  dist_cond;
+  u64 dist_time_limit_us;             /* maximum time of one service round */
+  u64 dist_period_us;                         /* delay after budget expiry */
+  u64 next_dist_time_us;               /* next service time when throttled */
+
+  u32 dist_target_queue_buf_len;             /* snapshot currently prepared */
+  u32 dist_snapshot_cursor;                  /* queue snapshot resume cursor */
+  u32 dist_prepare_row;                       /* matrix resize resume cursor */
+  u32 dist_repair_row, dist_repair_col;       /* old cache repair resume point */
+  u32 dist_new_row, dist_new_col;              /* new distance resume point */
+
+  u8 dist_update_phase;                         /* worker-local update phase */
+  u8 dist_throttled;                    /* previous service exhausted budget */
+
+  u64 dist_invocation_count;                    /* executed service rounds */
+  u64 dist_immediate_invocation_count;          /* immediately triggered rounds */
+  u64 dist_periodic_invocation_count;           /* retry-timer triggered rounds */
+  u64 dist_pair_count;                          /* Hamming distances computed */
+  u64 dist_completed_row_count;                 /* fully published seed rows */
+  u64 dist_budget_exhausted_count;              /* rounds stopped by budget */
+  u64 dist_total_time_us;                       /* cumulative service time */
+  u64 dist_max_round_time_us;                   /* longest service round */
+  u64 dist_worker_start_us;                     /* monotonic fuzz-loop start */
 
   subdomain sd;                                   /* client: subdomain info */
   // u8 *subdomain_center;                           /* cur sundomain trace */
@@ -981,14 +1000,12 @@ typedef struct afl_state {
   double max_total_energy;
   double min_total_energy;
 
-  u64 now_time;                                         /*  current time */
-  u64 last_priority_time;                                      /*  */
-  u64 last_LB_sort_time;                                      /*  */
-  u64 last_LB_time;                                          /*  */
+  u64 now_time;                                         /* 近似的 current time */
+  u64 last_priority_time;                                      /* 上次优先级调整时间 */
+  u64 last_LB_sort_time;                                      /* 上次负载均衡排序时间 */
+  u64 last_LB_time;                                          /* 上次负载均衡选种子时间 */
 
-  double total_dist_time;                                     /*  */
-
-  GHashTable *Iname_Sid_map;                            /* subdomain */
+  GHashTable *Iname_Sid_map;                            /* 实例名到subdomain的映射 */
 
   u8 *trace_mini_tmp_buf;                  /* a fixed buffer for trace_mini */
   u8  fuzz_LB_seed;                  /* force to fuzz seed for load balance */
@@ -996,7 +1013,7 @@ typedef struct afl_state {
   u32 max_contribute;
   u32 min_contribute;
 
-  // 
+  // 负载均衡采样
   double *send_probability;                                         /*      */
   u32    *send_alias_table;                                             /*  */
 
@@ -1601,4 +1618,3 @@ static inline int permissive_create(afl_state_t *afl, const char *fn) {
 #endif
 
 #endif
-

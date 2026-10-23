@@ -635,6 +635,7 @@ void update_priority(afl_state_t *afl, subdomain *c) {
 
     if (q->disabled) continue;
 
+    // 计数候选集（favored || (not_fuzz)）
     if ((!q->was_fuzzed) || q->favored) afl->candidate_set_size++;
 
     q->min_dist_ES = 0;
@@ -645,7 +646,7 @@ void update_priority(afl_state_t *afl, subdomain *c) {
 
   }
 
-  // 1. 、
+  // 1. 构建候选集、测试集
 
   afl->candidate_set =
       afl_realloc((void **)&afl->candidate_set,
@@ -667,7 +668,7 @@ void update_priority(afl_state_t *afl, subdomain *c) {
   afl->max_factor = -DBL_MAX;
   afl->min_factor = DBL_MAX;
 
-  // 
+  // 截取距离计算结果
   u32 dist_queue_buf_len = afl->last_dist_queue_buf_len;
 
   for (u32 i = 0; i < afl->candidate_set_size; i++) {
@@ -676,7 +677,7 @@ void update_priority(afl_state_t *afl, subdomain *c) {
 
     for (u32 j = 0; j < c->size; j++) {
 
-      // （was_fuzzed)
+      // 只看执行集（was_fuzzed)
       if (!afl->queue_buf[j]->was_fuzzed || afl->queue_buf[j]->disabled)
         continue;
 
@@ -684,7 +685,7 @@ void update_priority(afl_state_t *afl, subdomain *c) {
           j >= dist_queue_buf_len)
         continue;
 
-      // ：fuzz && disabled && 
+      // 执行集：被fuzz了 && 不是disabled && 在子域内
       double dist = get_distance_from_matrix(afl, afl->candidate_set[i]->id, j);
 
       if (dist < min_d && dist > 0) { min_d = dist; }
@@ -705,7 +706,7 @@ void update_priority(afl_state_t *afl, subdomain *c) {
 
   }
 
-  // 
+  // 排序
   for (u32 i = 0; i < afl->candidate_set_size; i++) {
 
     struct queue_entry *q = afl->candidate_set[i];
@@ -797,7 +798,7 @@ void show_stats_normal(afl_state_t *afl) {
   /* check if re divide input domain */
   u8 if_re_division = 0;
 
-  /* ， */
+  /* 开始启动的一段时间不划分，后续十分钟间隔检查是否划分 */
 #define DIVIDE_DELAY 120000  // 2 * 60 * 1000
 #define DIVIDE_GAP 600000    // 10 * 60 * 1000
 
@@ -812,19 +813,19 @@ void show_stats_normal(afl_state_t *afl) {
 
     afl->last_check_overlap_time = cur_ms;
 
-    if (afl->last_divide_time) {  // 
+    if (afl->last_divide_time) {  // 非初次划分
 
       u_simplestring_time_diff(time_tmp, afl->prev_run_time + get_cur_time(),
                                afl->start_time);
-      DCPF_LOG("  %s", time_tmp);
+      DCPF_LOG("检查是否重新划分 当前时间 %s", time_tmp);
 
-      // 1. ， ×
+      // 1. 检查任务是否测试充分，剔除充分测试的任务 ×
 
-      // 2. ，20%，。
+      // 2. 检查任务重叠度，重叠增加20%，重新划分。
       if (check_subdomain_overlap(afl, afl->subdomain_array, afl->subdomain_num,
                                   afl->last_dist_queue_buf_len)) {
 
-        DCPF_LOG("，...");
+        DCPF_LOG("任务重叠过多，重新划分...");
         if_re_division = 1;
 
       }
@@ -833,49 +834,49 @@ void show_stats_normal(afl_state_t *afl) {
 
       u_simplestring_time_diff(time_tmp, afl->prev_run_time + get_cur_time(),
                                afl->start_time);
-      DCPF_LOG("  %s", time_tmp);
-      if_re_division = 1;  // 
+      DCPF_LOG("初次划分 当前时间 %s", time_tmp);
+      if_re_division = 1;  // 初次划分
 
     }
 
-    // ，
+    // 若需要，重新划分输入域
     if (if_re_division) {
 
       u_simplestring_time_diff(time_tmp, afl->prev_run_time + get_cur_time(),
                                afl->start_time);
-      DCPF_LOG("  %s", time_tmp);
+      DCPF_LOG("开始划分 当前时间 %s", time_tmp);
 
       // input_domain_division(afl);
 
       input_domain_division_k_medoids(afl);
 
-      // 
+      // 记录初始重叠度
       init_subdomain_overlap_score(afl, afl->subdomain_array,
                                    afl->subdomain_num,
                                    afl->last_dist_queue_buf_len);
 
     }
 
-    /* 2：
-         */
+    /* 负载均衡方案2：主节点让任务轻的子节点分担任务重的部分
+        按贡献大小评估任务大小 */
 
     /**
-     * ：
-     * 1. 。
-     *    ，。
+     * 调度时机：
+     * 1. 延时开启。
+     *    上一次开始聚类贡献归零，因此负载均衡在上一次聚类结束后一段时间后开启。
      *
-     * 2. 。
-     *    。，。
+     * 2. 节点数量。
+     *    根据节点贡献度抽样。高概率抽样，发送到低概率。
      *
-     * 3. 。
-     *    5。
+     * 3. 确实有任务不均衡的问题。
+     *    最大贡献大于最小贡献的5倍。
      *
-     * 4. 。
-     *    。
+     * 4. 时间间隔。
+     *    少量多次。
      *
      */
 
-    /* ,  */
+    /* 别名表更新周期, 且明显不均衡 */
     if ((cur_ms - afl->start_time) > LOAD_BALANCE_DELAY &&
         afl->max_contribute > afl->min_contribute * 5) {
 
@@ -892,11 +893,11 @@ void show_stats_normal(afl_state_t *afl) {
 
   }
 
-  /* ， */
-  u32 executions_per_interval = 1000;  //  LB
+  /* 自适应种子更新周期，根据执行速度确定 */
+  u32 executions_per_interval = 1000;  // 多少次执行触发一次 LB
   u32 time_interval_ms = (executions_per_interval * 1000) / afl->stats_avg_exec;
 
-  /* ()，， */
+  /* 别名表创建了(主)，且明显不均衡情况存在，发送执行均衡任务 */
   if (afl->send_alias_table && afl->max_contribute > afl->min_contribute * 5 &&
       (cur_ms - afl->last_LB_time) > time_interval_ms) {
 
@@ -910,9 +911,9 @@ void show_stats_normal(afl_state_t *afl) {
       c_send = &afl->subdomain_array[select_send_domain(afl)];
       c_recv = &afl->subdomain_array[select_recv_domain(afl)];
 
-    } while (c_send == c_recv);  // 
+    } while (c_send == c_recv);  // 不能一样
 
-    // ，
+    // 避免负载均衡堆积，检查队列
     if (get_LBqueue_size(afl->redis_connect, c_recv->id) < 5) {
 
       // DCPF_LOG("send subdomain %u, recv subdomain %u", c_send->id,
@@ -920,7 +921,7 @@ void show_stats_normal(afl_state_t *afl) {
       ++c_send->LBsend;
       ++c_recv->LBrecv;
 
-      // ，c_send 
+      // 超过时间阈值，c_send 重新排序
       if (cur_ms - afl->last_LB_sort_time > LOAD_BALANCE_GAP) {
 
         afl->last_LB_sort_time = cur_ms;
@@ -929,11 +930,11 @@ void show_stats_normal(afl_state_t *afl) {
         qsort(c_send->items, c_send->size, sizeof(struct queue_entry *),
               compare_seed);
 
-        c_send->cursor = 0;  // 
+        c_send->cursor = 0;  // 从头再来
 
       }
 
-      // ，
+      // 优先寻找更优，测试更少的种子进行负载均衡
       struct queue_entry *seed = NULL;
       while (c_send->cursor < c_send->size) {
 
@@ -951,15 +952,15 @@ void show_stats_normal(afl_state_t *afl) {
 
       if (c_send->cursor >= c_send->size) {
 
-        ++c_send->max_LB;    // 
-        c_send->cursor = 0;  // 
+        ++c_send->max_LB;    // 轮次增加
+        c_send->cursor = 0;  // 从头再来
 
-        // ， 0 
+        // 可能没选到种子，选第 0 个
         if (!seed) seed = c_send->items[c_send->cursor++];
 
       }
 
-      // 
+      // 发送种子
       send_seed_to_cluster(afl, seed, c_recv);
 
       // DCPF_LOG("[load balance] send seed#%u to cluster %u, send %u times",
