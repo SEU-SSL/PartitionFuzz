@@ -60,6 +60,11 @@
 #define MAXIMUM_QUICK_EFF_EXECS (64 * 1024U)
 #define THRESHOLD_DEC_TIME (20 * 60 * 1000U)
 
+/* PartitionFuzz worker-local distance computation. Runtime overrides:
+   AFL_DISTANCE_TIME_LIMIT_US and AFL_DISTANCE_PERIOD_MS. */
+#define DEFAULT_DISTANCE_TIME_LIMIT_US 2000000ULL
+#define DEFAULT_DISTANCE_PERIOD_MS 20000ULL
+
 /* Set the Prob of selecting eff_bytes 3 times more than original,
    Now disabled */
 #define EFF_HAVOC_RATE 3
@@ -541,4 +546,3 @@
 #define AFL_TXT_STRING_MAX_MUTATIONS 6
 
 #endif                                                  /* ! _HAVE_CONFIG_H */
-

@@ -32,11 +32,9 @@ void init_subdomain_overlap_score(afl_state_t *afl, subdomain *subdomain_arr,
 u8 check_subdomain_overlap(afl_state_t *afl, subdomain *subdomain_arr,
                            u32 subdomain_num, u32 seed_num);
 
-void bind_all_cpu(s32 fuzz_cpu, pthread_t tid);
-
-void inform_update_distance_matrix(afl_state_t *afl);
-
-void *update_distance_matrix_thread(void *arg);
+void maybe_service_distance_matrix(afl_state_t *afl);
+void start_distance_statistics(afl_state_t *afl);
+void log_distance_summary(afl_state_t *afl);
 
 void sync_subdomain_seeds_from_db(afl_state_t *afl, u32 subdomain_id);
 
@@ -50,7 +48,7 @@ int  compare_seed(const void *a, const void *b);
 void send_seed_to_cluster(afl_state_t *afl, struct queue_entry *q,
                           subdomain *c);
 
-// 
+// 排序
 void quickSort(struct queue_entry **arr, int low, int high);
 
 u32 select_send_domain(afl_state_t *afl);
@@ -58,4 +56,3 @@ u32 select_recv_domain(afl_state_t *afl);
 
 void scan_LB_report(afl_state_t *afl);
 #endif
-

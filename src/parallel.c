@@ -1,8 +1,6 @@
 #include "parallel.h"
 #include <float.h>
 #include <assert.h>
-#include <sys/syscall.h>
-#include <pthread.h>
 #include <glib-2.0/glib.h>
 #include <math.h>
 
@@ -13,8 +11,8 @@ double get_trace_mini_distance(afl_state_t *afl, u8 *trace1, u8 *trace2) {
   // u32 len_a = 0;
   // u32 len_b = 0;
 
-  // u8  u64 >>3
-  u32 len = (afl->fsrv.map_size >> 6);  // u64 
+  // u8 到 u64 >>3
+  u32 len = (afl->fsrv.map_size >> 6);  // u64 长度
 
   u64 *a = (u64 *)trace1;
   u64 *b = (u64 *)trace2;
@@ -44,16 +42,16 @@ double get_trace_mini_distance(afl_state_t *afl, u8 *trace1, u8 *trace2) {
 
 }
 
-/* dst（trace_bits） */
+/* 确保覆盖dst（trace_bits）不会对后续造成影响 */
 void decompress_trace_mini(u8 *dst, u8 *src, u32 map_size) {
 
   u32 i = 0;
   u32 bit_offset;
   while (i < map_size) {
 
-    bit_offset = i & 7;          // 
-    uint8_t byte = src[i >> 3];  // 
-    dst[i] = (byte >> bit_offset) & 0X1;  //  bit
+    bit_offset = i & 7;          // 计算当前位在字节中的位置
+    uint8_t byte = src[i >> 3];  // 获取字节
+    dst[i] = (byte >> bit_offset) & 0X1;  // 提取对应的 bit
     ++i;
 
   }
@@ -110,28 +108,28 @@ void update_edge_freq(afl_state_t *afl, u32 *freq_map) {
 
 // int partition_CD(struct queue_entry **arr, int low, int high) {
 
-//   double pivot = arr[high]->cluster_deviation;  // 
+//   double pivot = arr[high]->cluster_deviation;  // 选择最后一个元素作为枢轴
 //   int    i = low - 1;                           //
-//   i
+//   i指向较大元素的最后一个位置
 
 //   for (int j = low; j < high; j++) {
 
 //     if (arr[j]->WCSD_dist < pivot) {
 
 //       i++;
-//       //  arr[i]  arr[j]
+//       // 交换 arr[i] 和 arr[j]
 //       struct queue_entry *temp = arr[i];
 //       arr[i] = arr[j];
 //       arr[j] = temp;
 //     }
 //   }
 
-//   // 
+//   // 将基准元素放到正确位置
 //   struct queue_entry *temp = arr[i + 1];
 //   arr[i + 1] = arr[high];
 //   arr[high] = temp;
 
-//   return i + 1;  // 
+//   return i + 1;  // 返回基准元素的索引
 // }
 
 // void quickSort_CD(struct queue_entry **arr, int low, int high) {
@@ -145,24 +143,24 @@ void update_edge_freq(afl_state_t *afl, u32 *freq_map) {
 // }
 
 /**
- * @description: 
- * 1. 。
- * 2. 
+ * @description: 就近分点
+ * 1. 已经固定的簇不再分点。
+ * 2. 已经固定的点不再变化
  * @return {*}
  */
 void divide_seed_to_subdomain(afl_state_t *afl, u32 seed_num,
                               subdomain *subdomain_arr, u32 subdomain_num) {
 
-  // 1：，
+  // 负载均衡方案1：划分前调整，跳过已经成熟子域的种子
 
-  // // 
+  // // 恢复要调整的簇种子数量
   // for (u32 k = 0; k < subdomain_num; k++) {
 
   //   subdomain *c = &subdomain_arr[k];
   //   if (!c->fixed) { c->cluster_size = 0; }
   // }
 
-  // ，
+  // 划分已有距离种子，计算距离
   for (u32 i = 0; i < seed_num; i++) {
 
     struct queue_entry *q = afl->dist_queue_buf[i];
@@ -203,11 +201,11 @@ void divide_seed_to_subdomain(afl_state_t *afl, u32 seed_num,
 }
 
 /**
- * @description: seed_bufART
+ * @description: 从seed_buf中使用ART方法获取质心
  * @param {afl_state_t} *afl
  * @param {queue_entry} *
  * @param {u32} seed_num
- * @param {Cluster} *cluster_arr.medoid 
+ * @param {Cluster} *cluster_arr.medoid 存放返回结果
  * @param {u32} get_num
  * @return {*}
  */
@@ -240,7 +238,7 @@ void get_domain_center(afl_state_t *afl, struct queue_entry **seed_buf,
 
   assert(select_1 != UINT32_MAX && select_2 != UINT32_MAX);
 
-  // 
+  // 最大化选前两个
   subdomain_arr[0].center = seed_buf[select_1];
   subdomain_arr[0].center->is_center = 1;
   subdomain_arr[0].center->subdomain_id = 0;
@@ -250,8 +248,8 @@ void get_domain_center(afl_state_t *afl, struct queue_entry **seed_buf,
   subdomain_arr[1].center->subdomain_id = 1;
   subdomain_arr[1].id = 1;
 
-  // 
-  for (u32 i = 2; i < subdomain_num; i++) {  // 
+  // 选后续的
+  for (u32 i = 2; i < subdomain_num; i++) {  // 质心数目
 
     double              max = -DBL_MAX;
     struct queue_entry *m = NULL;
@@ -264,12 +262,12 @@ void get_domain_center(afl_state_t *afl, struct queue_entry **seed_buf,
       struct queue_entry *m_min = NULL;
       double              min = DBL_MAX;
 
-      for (u32 k = 0; k < i; k++) {  // 
+      for (u32 k = 0; k < i; k++) {  // 所有质心求最小
 
         double temp = get_distance_from_matrix(afl, seed_buf[j]->id,
                                                subdomain_arr[k].center->id);
 
-        if (temp < min) {  // 
+        if (temp < min) {  // 与所有质心最小的
           min = temp;
           m_min = seed_buf[j];
 
@@ -288,7 +286,7 @@ void get_domain_center(afl_state_t *afl, struct queue_entry **seed_buf,
 
     if (!m) FATAL("not select one seed to init medoids!");
 
-    // 
+    // 选定质心
     subdomain_arr[i].center = m;
     subdomain_arr[i].center->is_center = 1;
     subdomain_arr[i].center->subdomain_id = i;
@@ -298,7 +296,7 @@ void get_domain_center(afl_state_t *afl, struct queue_entry **seed_buf,
 
 }
 
-// 
+// 利用已有距离的全局种子来评估
 void init_subdomain_overlap_score(afl_state_t *afl, subdomain *subdomain_arr,
                                   u32 subdomain_num, u32 seed_num) {
 
@@ -324,7 +322,7 @@ void init_subdomain_overlap_score(afl_state_t *afl, subdomain *subdomain_arr,
         if (dist <= c->r) {
 
           overlap++;
-          break;  // 
+          break;  // 有一个任务相交就计数
 
         }
 
@@ -340,7 +338,7 @@ void init_subdomain_overlap_score(afl_state_t *afl, subdomain *subdomain_arr,
 
 }
 
-// 20% 1
+// 有一个子域中种子重叠增长超过20%就返回 1
 u8 check_subdomain_overlap(afl_state_t *afl, subdomain *subdomain_arr,
                            u32 subdomain_num, u32 seed_num) {
 
@@ -366,7 +364,7 @@ u8 check_subdomain_overlap(afl_state_t *afl, subdomain *subdomain_arr,
         if (dist <= c->r) {
 
           overlap++;
-          break;  // 
+          break;  // 有一个任务相交就计数
 
         }
 
@@ -377,7 +375,7 @@ u8 check_subdomain_overlap(afl_state_t *afl, subdomain *subdomain_arr,
     double subdomain_overlap = (double)overlap / subdomain_arr[k1].size;
     if (subdomain_overlap > 1.2 * subdomain_arr[k1].overlap) {
 
-      DCPF_DEBUG(" %u 0.2，%f->%f", k1,
+      DCPF_DEBUG("子域 %u 重叠增长超过0.2倍，%f->%f", k1,
                  subdomain_arr[k1].overlap, subdomain_overlap);
       return 1;
 
@@ -436,7 +434,7 @@ int get_instance_num(afl_state_t *afl) {
 
 // void merge_subdomain(afl_state_t *afl, u8 *dst, u8 *src) {
 
-//   u32  len = (afl->fsrv.map_size >> 6);  // u64 
+//   u32  len = (afl->fsrv.map_size >> 6);  // u64 长度
 //   u64 *a = (u64 *)src;
 //   u64 *b = (u64 *)dst;
 
@@ -448,7 +446,7 @@ int get_instance_num(afl_state_t *afl) {
 
 // bool if_have_same_hit(afl_state_t *afl, u8 *dst, u8 *src) {
 
-//   u32  len = (afl->fsrv.map_size >> 6);  // u64 
+//   u32  len = (afl->fsrv.map_size >> 6);  // u64 长度
 //   u64 *a = (u64 *)src;
 //   u64 *b = (u64 *)dst;
 
@@ -465,7 +463,7 @@ int get_instance_num(afl_state_t *afl) {
 
 //   for (u32 k = 0; k < c_arr_len; k++) {
 
-//     //  k
+//     // 子域 k
 //     Cluster *c = &c_arr[k];
 //     c->subdomain = ck_alloc(afl->fsrv.map_size >> 3);
 //     for (u32 i = 0; i < seed_num; i++) {
@@ -475,10 +473,10 @@ int get_instance_num(afl_state_t *afl) {
 //       merge_subdomain(afl, c->subdomain, q->trace_mini);
 //     }
 
-//                                                          /*  k
-//                                                           */
+//                                                          /* 统计子域 k
+//                                                          内桩点数目 */
 //     u32  hit_num = 0;
-//     u32  len = (afl->fsrv.map_size >> 6);  // u64 
+//     u32  len = (afl->fsrv.map_size >> 6);  // u64 长度
 //     u64 *a = (u64 *)c->subdomain;
 //     for (u32 i = 0; i < len; i++) {
 
@@ -489,7 +487,7 @@ int get_instance_num(afl_state_t *afl) {
 //   }
 
 //                                                           /*
-//                                                           
+//                                                           计算子域内独有桩点数目
 //                                                           */
 //   u8 *other_domain = ck_alloc(afl->fsrv.map_size >> 3);
 //   u8 *unique_domain = ck_alloc(afl->fsrv.map_size >> 3);
@@ -505,9 +503,9 @@ int get_instance_num(afl_state_t *afl) {
 //       merge_subdomain(afl, other_domain, c_arr[k2].subdomain);
 //     }
 
-//     // 
+//     // 统计独有桩点数目
 //     u32  unique_hit_num = 0;
-//     u32  len = (afl->fsrv.map_size >> 6);  // u64 
+//     u32  len = (afl->fsrv.map_size >> 6);  // u64 长度
 //     u64 *a = (u64 *)c_arr[k1].subdomain;
 //     u64 *b = (u64 *)other_domain;
 //     u64 *c = (u64 *)unique_domain;
@@ -541,13 +539,13 @@ int get_instance_num(afl_state_t *afl) {
 //   }
 // }
 
-/* ， */
+/* 划分任务到，子域 */
 void input_domain_division(afl_state_t *afl) {
 
   u64 start_ms = get_cur_time();
   u32 worker_num = get_instance_num(afl);
   u32 seed_num = afl->last_dist_queue_buf_len;
-  // show_stats
+  // 避免在种子添加过程中调用show_stats带来的问题
   u32 total_seed_num = afl->queued_items - 1;
 
   u8 time_tmp[64];
@@ -572,7 +570,7 @@ void input_domain_division(afl_state_t *afl) {
 
   }
 
-  /* , 0 */
+  /* 重置质心内容, 第一次是0 */
   for (u32 k = 0; k < afl->subdomain_num; k++) {
 
     subdomain *c = &afl->subdomain_array[k];
@@ -590,8 +588,7 @@ void input_domain_division(afl_state_t *afl) {
   subdomain *c_arr = afl_realloc((void **)&afl->subdomain_array,
                                  sizeof(subdomain) * c_arr_len);
 
-  get_domain_center(afl, afl->dist_queue_buf, afl->dist_queue_buf_len, c_arr,
-                    c_arr_len);
+  get_domain_center(afl, afl->dist_queue_buf, seed_num, c_arr, c_arr_len);
 
   DCPF_DEBUG("[sundomain center info]");
   for (u32 i = 0; i < c_arr_len; i++) {
@@ -606,16 +603,16 @@ void input_domain_division(afl_state_t *afl) {
 
   }
 
-  /* ,  */
+  /* 就近分点, 所有种子 */
   divide_seed_to_subdomain(afl, seed_num, c_arr, c_arr_len);
 
   fflush(stdout);
 
-  /*  */
+  /* 计算任务半径 */
 
   for (u32 k = 0; k < c_arr_len; k++) {
 
-    double max = 0;  // 0
+    double max = 0;  // 簇内没有种子半径就是0
 
     for (u32 i = 0; i < c_arr[k].size; i++) {
 
@@ -635,7 +632,7 @@ void input_domain_division(afl_state_t *afl) {
 
   }
 
-  // ,workermaster
+  // 存储种子簇到数据库中,用于worker同步master种子
   for (u32 i = 0; i < total_seed_num; i++) {
 
     struct queue_entry *q = afl->queue_buf[i];
@@ -646,7 +643,7 @@ void input_domain_division(afl_state_t *afl) {
       update_seed_subdomain_to_db(afl->redis_connect, afl->dist_queue_buf[i]);
     else {
 
-      // ，max，
+      // 没有计算完成，重置成默认的max，避免上一次分布的簇分配影响
       afl->queue_buf[i]->subdomain_id = UINT32_MAX;
       update_seed_subdomain_to_db(afl->redis_connect, afl->queue_buf[i]);
 
@@ -654,7 +651,7 @@ void input_domain_division(afl_state_t *afl) {
 
   }
 
-  /* trace,  */
+  /* 存储任务trace, 子域信息到数据库 */
 
   u32            k = 0;
   DIR           *sd;
@@ -713,16 +710,16 @@ void input_domain_division(afl_state_t *afl) {
 
 /**
  * @description:  helper fun for k_medoids.
- * ,disabled
+ * 将数据点分配到最近的质心,disabled的种子不分配
  * @param {afl_state_t} *afl
  * @param {Cluster} *cluster_array
  * @param {u32} cluster_num
- * @return {*}dms->dist_queue_buf[i]->cluster_id, -1 disbale
+ * @return {*}dms->dist_queue_buf[i]->cluster_id, -1 是disbale未分配
  */
 void assign_points_to_clusters(afl_state_t *afl, subdomain *cluster_array,
                                u32 cluster_num, u32 seed_num) {
 
-  for (u32 i = 0; i < seed_num; i++) {  // 
+  for (u32 i = 0; i < seed_num; i++) {  // 分配每个种子
 
     if (afl->dist_queue_buf[i]->is_center) continue;
     if (afl->dist_queue_buf[i]->disabled) continue;
@@ -732,7 +729,7 @@ void assign_points_to_clusters(afl_state_t *afl, subdomain *cluster_array,
     double min_dist = DBL_MAX;
     u32    new_cluster = UINT32_MAX;
 
-    for (u32 k = 0; k < cluster_num; k++) {  // 
+    for (u32 k = 0; k < cluster_num; k++) {  // 找到距离当前点最近的质心
 
       double dist =
           get_distance_from_matrix(afl, i, cluster_array[k].center->id);
@@ -748,11 +745,11 @@ void assign_points_to_clusters(afl_state_t *afl, subdomain *cluster_array,
 
     assert(new_cluster != UINT32_MAX);
 
-    // 
+    // 记录每个点所属的簇
     if (new_cluster != old_cluster) {
 
       afl->dist_queue_buf[i]->subdomain_id = new_cluster;
-      // ，
+      // 种子所属簇发生变化，两个簇都要更新质心
       if (old_cluster != UINT32_MAX)
         cluster_array[old_cluster].need_update_medoid = 1;
       cluster_array[new_cluster].need_update_medoid = 1;
@@ -765,20 +762,20 @@ void assign_points_to_clusters(afl_state_t *afl, subdomain *cluster_array,
 
 /**
  * @description: helper fun for k_medoids.
- * ，
+ * 选择一个点作为簇的中心，使得其到簇内所有点的总距离最小
  * @param {afl_state_t} *afl
  * @param {Cluster} *cluster_array
  * @param {u32} cluster_num
- * @return {*} 1 。
+ * @return {*}返回 1 算法收敛。
  */
 u8 update_medoids(afl_state_t *afl, subdomain *cluster_array, u32 cluster_num,
                   u32 seed_num) {
 
-  u8 all_converged = 1;  // 
+  u8 all_converged = 1;  // 是否所有的簇都已经收敛
 
-  for (u32 k = 0; k < cluster_num; k++) {  // 
+  for (u32 k = 0; k < cluster_num; k++) {  // 遍历每个簇
 
-    // ，
+    // 收敛且簇内节点没有变化，跳过该质心
     if (!cluster_array[k].need_update_medoid) {
 
       DCPF_DEBUG("SKIP UPDATE medoid %u", k);
@@ -791,12 +788,12 @@ u8 update_medoids(afl_state_t *afl, subdomain *cluster_array, u32 cluster_num,
     double min_total_dist = DBL_MAX;
     u32    new_medoid = UINT32_MAX;
 
-    for (u32 i = 0; i < seed_num; i++) {  // 
+    for (u32 i = 0; i < seed_num; i++) {  // 遍历簇内的所有点
 
       if (afl->dist_queue_buf[i]->subdomain_id != k) continue;
       if (afl->dist_queue_buf[i]->disabled) continue;
 
-      //  i 
+      // 计算簇内点 i 作为质心时的簇内的总距离
       double total_dist = 0;
       for (u32 j = 0; j < seed_num; j++) {
 
@@ -807,7 +804,7 @@ u8 update_medoids(afl_state_t *afl, subdomain *cluster_array, u32 cluster_num,
 
       }
 
-      // 
+      // 选择该簇最中心的点
       if (total_dist < min_total_dist) {
 
         min_total_dist = total_dist;
@@ -819,16 +816,16 @@ u8 update_medoids(afl_state_t *afl, subdomain *cluster_array, u32 cluster_num,
 
     assert(new_medoid != UINT32_MAX);
 
-    if (new_medoid == old_medoid) {  //  k 
+    if (new_medoid == old_medoid) {  // 第 k 个簇质心没变
 
-      // ，
+      // 簇收敛，若后续簇内节点发生变化则继续更新
       cluster_array[k].need_update_medoid = 0;
 
-    } else {  // 
+    } else {  // 更新质心
 
       all_converged = 0;
-      cluster_array[k].center->is_center = 0;                     // 
-      cluster_array[k].center = afl->dist_queue_buf[new_medoid];  // 
+      cluster_array[k].center->is_center = 0;                     // 辞旧
+      cluster_array[k].center = afl->dist_queue_buf[new_medoid];  // 迎新
       cluster_array[k].center->is_center = 1;
 
     }
@@ -843,9 +840,9 @@ void input_domain_division_k_medoids(afl_state_t *afl) {
 
   u64 start_ms = get_cur_time();
   u32 worker_num = get_instance_num(afl);
-  u32 seed_num = afl->last_dist_queue_buf_len;  // 
+  u32 seed_num = afl->last_dist_queue_buf_len;  // 截取已经计算好距离的种子
 
-  // show_stats
+  // 避免在种子添加过程中调用show_stats带来的问题
   u32 total_seed_num = MAX(seed_num, afl->queued_items - 1);
 
   u8 time_tmp[64];
@@ -870,7 +867,7 @@ void input_domain_division_k_medoids(afl_state_t *afl) {
 
   }
 
-  /* , 0 */
+  /* 重置质心内容, 第一次是0 */
   afl->max_contribute = 0;
   afl->min_contribute = UINT32_MAX;
   for (u32 k = 0; k < afl->subdomain_num; k++) {
@@ -884,7 +881,7 @@ void input_domain_division_k_medoids(afl_state_t *afl) {
     c->r = 0;
     // c->subdomain
     c->need_update_medoid = 0;
-    c->contribute = 1;  // ，1，0
+    c->contribute = 1;  // 重置贡献，初始为1，避免比例为0
     c->LB_contribute = 0;
     c->cursor = 0;
 
@@ -894,10 +891,9 @@ void input_domain_division_k_medoids(afl_state_t *afl) {
   subdomain *c_arr = afl_realloc((void **)&afl->subdomain_array,
                                  sizeof(subdomain) * c_arr_len);
 
-  /*  1. maximum minimum distance  */
+  /* 步骤 1. maximum minimum distance 确定初始质心 */
 
-  get_domain_center(afl, afl->dist_queue_buf, afl->dist_queue_buf_len, c_arr,
-                    c_arr_len);
+  get_domain_center(afl, afl->dist_queue_buf, seed_num, c_arr, c_arr_len);
   DCPF_DEBUG("[sundomain center info]");
   for (u32 i = 0; i < c_arr_len; i++) {
 
@@ -911,14 +907,14 @@ void input_domain_division_k_medoids(afl_state_t *afl) {
 
   }
 
-  /*  2.  K-Medoids ， */
+  /* 步骤 2. 迭代 K-Medoids 算法，直到收敛或达到最大迭代次数 */
 
   u8  is_converged = 0;
   u64 iter_start_time = get_cur_time();
 
   for (int iter = 0; iter < 100; iter++) {
 
-    /*  3:  */
+    /* 步骤 3: 分配点到簇 */
     assign_points_to_clusters(afl, c_arr, c_arr_len, seed_num);
 
     /* debug */
@@ -946,10 +942,10 @@ void input_domain_division_k_medoids(afl_state_t *afl) {
     //            dms->dist_queue_buf_len - assign_num);
     /* debug end */
 
-    /*  4:  */
+    /* 步骤 4: 更新质心 */
     is_converged = update_medoids(afl, c_arr, c_arr_len, seed_num);
 
-    // ，，
+    // 如果质心没有变化，则算法收敛，退出循环
     if (is_converged) {
 
       DCPF_LOG("K-Medoids converged after %d iterations.", iter + 1);
@@ -964,8 +960,8 @@ void input_domain_division_k_medoids(afl_state_t *afl) {
   u64 iter_end_time = get_cur_time();
   DCPF_LOG("iter use %llu seconds", (iter_end_time - iter_start_time) / 1000);
 
-  /*  5:  */
-  // ，
+  /* 步骤 5: 计算簇半径 */
+  // 划分已有距离种子，计算距离
   for (u32 i = 0; i < seed_num; i++) {
 
     struct queue_entry *q = afl->dist_queue_buf[i];
@@ -985,7 +981,7 @@ void input_domain_division_k_medoids(afl_state_t *afl) {
 
   for (u32 k = 0; k < c_arr_len; k++) {
 
-    double max = 0.0;  // 0
+    double max = 0.0;  // 簇内没有种子半径就是0
 
     for (u32 i = 0; i < c_arr[k].size; i++) {
 
@@ -1005,7 +1001,7 @@ void input_domain_division_k_medoids(afl_state_t *afl) {
 
   }
 
-  // ,workermaster
+  // 存储种子簇到数据库中,用于worker同步master种子
   for (u32 i = 0; i < total_seed_num; i++) {
 
     struct queue_entry *q = afl->queue_buf[i];
@@ -1016,7 +1012,7 @@ void input_domain_division_k_medoids(afl_state_t *afl) {
       update_seed_subdomain_to_db(afl->redis_connect, afl->dist_queue_buf[i]);
     else {
 
-      // ，max，
+      // 没有计算完成，重置成默认的max，避免上一次分布的簇分配影响
       afl->queue_buf[i]->subdomain_id = UINT32_MAX;
       update_seed_subdomain_to_db(afl->redis_connect, afl->queue_buf[i]);
 
@@ -1024,7 +1020,7 @@ void input_domain_division_k_medoids(afl_state_t *afl) {
 
   }
 
-  /* trace,  */
+  /* 存储任务trace, 子域信息到数据库 */
 
   u32            k = 0;
   DIR           *sd;
@@ -1061,8 +1057,8 @@ void input_domain_division_k_medoids(afl_state_t *afl) {
 
     char *instance_name = sd_ent->d_name;
 
-    // 
-    // GINT_TO_POINTER(0) == NULL, ，
+    // 绑定实例名称到子域
+    // GINT_TO_POINTER(0) == NULL, 故加一存，读出来减一
     g_hash_table_insert(afl->Iname_Sid_map, g_strdup(instance_name),
                         GINT_TO_POINTER(k + 1));
 
@@ -1086,230 +1082,344 @@ void input_domain_division_k_medoids(afl_state_t *afl) {
 
 }
 
-int get_nprocs() {
+enum distance_update_phase {
 
-  FILE *fp;
-  int   count = 0;
-  char  line[1024];
-  fp = fopen("/proc/cpuinfo", "r");
-  if (!fp) {
+  DISTANCE_UPDATE_IDLE = 0,
+  DISTANCE_UPDATE_SNAPSHOT,
+  DISTANCE_UPDATE_RESIZE,
+  DISTANCE_UPDATE_REPAIR,
+  DISTANCE_UPDATE_NEW_ROWS
 
-    perror("Unable to open /proc/cpuinfo");
-    return 0;
+};
+
+enum distance_service_result {
+
+  DISTANCE_SERVICE_COMPLETE = 0,
+  DISTANCE_SERVICE_BUDGET_EXHAUSTED,
+  DISTANCE_SERVICE_STOPPED
+
+};
+
+static u64 distance_monotonic_time_us(void) {
+
+  struct timespec ts;
+  if (unlikely(clock_gettime(CLOCK_MONOTONIC, &ts))) {
+
+    PFATAL("clock_gettime(CLOCK_MONOTONIC)");
 
   }
 
-  while (fgets(line, sizeof(line), fp)) {
-
-    if (strncmp(line, "processor", 9) == 0) { count++; }
-
-  }
-
-  fclose(fp);
-  return count;
+  return (u64)ts.tv_sec * 1000000ULL + (u64)ts.tv_nsec / 1000ULL;
 
 }
 
-void bind_all_cpu(s32 fuzz_cpu, pthread_t tid) {
+void start_distance_statistics(afl_state_t *afl) {
 
-  cpu_set_t thread_set;
-  CPU_ZERO(&thread_set);
-  int num_cpus = get_nprocs();
-
-  //  fuzz_cpu 
-  if (fuzz_cpu < 0 || fuzz_cpu >= num_cpus) {
-
-    WARNF("Invalid fuzz_cpu: %d", fuzz_cpu);
-
-  }
-
-  //  CPU ， fuzz_cpu 
-  for (int i = 0; i < num_cpus; i++) {
-
-    if (i == fuzz_cpu) continue;  //  fuzz_cpu 
-    CPU_SET(i, &thread_set);
-
-  }
-
-  //  CPU 
-  if (pthread_setaffinity_np(tid, sizeof(cpu_set_t), &thread_set) != 0) {
-
-    perror("pthread_setaffinity_np");
-    return;
-
-  }
+  afl->dist_worker_start_us = distance_monotonic_time_us();
 
 }
 
-void inform_update_distance_matrix(afl_state_t *afl) {
+static inline u8 distance_budget_exhausted(u64 deadline_us) {
 
-  /* lock to copy queue_buf */
+  return distance_monotonic_time_us() >= deadline_us;
 
-  afl->dist_queue_buf_len = afl->queued_items;
+}
+
+static void begin_distance_matrix_update(afl_state_t *afl) {
+
+  if (unlikely(afl->last_dist_queue_buf_len > afl->dist_queue_buf_len ||
+               afl->queued_items <= afl->dist_queue_buf_len)) {
+
+    FATAL("Invalid distance snapshot state: ready=%u snapshot=%u queue=%u",
+          afl->last_dist_queue_buf_len, afl->dist_queue_buf_len,
+          afl->queued_items);
+
+  }
+
+  afl->dist_target_queue_buf_len = afl->queued_items;
+  afl->dist_snapshot_cursor = afl->dist_queue_buf_len;
+  afl->dist_prepare_row = 0;
+  afl->dist_repair_row = 1;
+  afl->dist_repair_col = 0;
+  afl->dist_new_row = afl->last_dist_queue_buf_len;
+  afl->dist_new_col = 0;
 
   afl->dist_queue_buf = (struct queue_entry **)afl_realloc(
       (void **)&afl->dist_queue_buf,
-      afl->dist_queue_buf_len * sizeof(struct queue_entry *));
+      afl->dist_target_queue_buf_len * sizeof(struct queue_entry *));
   if (unlikely(!afl->dist_queue_buf)) { PFATAL("alloc"); }
 
-  for (u32 i = 0; i < afl->dist_queue_buf_len; i++)
-    afl->dist_queue_buf[i] = afl->queue_buf[i];
-
-  /*  */
-
-  afl->matrix_row_to_free = afl->dist_queue_buf_len;  // for all seed
-
-  // 0~item-2,item-1,
   afl->distance_matrix_cache =
       (double **)afl_realloc((void **)&afl->distance_matrix_cache,
-                             afl->matrix_row_to_free * sizeof(double *));
+                             afl->dist_target_queue_buf_len * sizeof(double *));
   if (unlikely(!afl->distance_matrix_cache)) { PFATAL("alloc"); }
 
-  for (u32 i = 0; i < afl->matrix_row_to_free; i++) {
-
-    afl->distance_matrix_cache[i] = (double *)afl_realloc(
-        (void **)&afl->distance_matrix_cache[i],
-        (afl->dist_queue_buf_len - i - 1) * sizeof(double));
-    if (unlikely(!afl->distance_matrix_cache[i])) { PFATAL("alloc"); }
-
-  }
-
-  // 
-  atomic_store(&afl->cal_dist_matrix, true);
-  pthread_cond_signal(&afl->dist_cond);  // 
+  /* The newly allocated pointer slots are zeroed by afl_realloc, so they are
+     safe to release even if this preparation is interrupted. */
+  afl->matrix_row_to_free = afl->dist_target_queue_buf_len;
+  afl->dist_update_phase = DISTANCE_UPDATE_SNAPSHOT;
 
 }
 
-void update_distance_matrix(afl_state_t *afl) {
+static enum distance_service_result update_distance_matrix_until(
+    afl_state_t *afl, u64 deadline_us) {
 
-  // DCPF_LOG("update distance matrix...");
+  while (likely(!afl->stop_soon)) {
 
-  u32 start = afl->last_dist_queue_buf_len;  // ,
+    switch (afl->dist_update_phase) {
 
-  // u64 cache_size =
-  //     (afl->dist_queue_buf_len - 1) * (afl->dist_queue_buf_len / 2);
-  // DCPF_DEBUG("distance_matrix_cache size is %llu * 8B now", cache_size);
+      case DISTANCE_UPDATE_SNAPSHOT:
 
-  /* ，disabeld */
+        while (afl->dist_snapshot_cursor < afl->dist_target_queue_buf_len) {
 
-  for (u32 j = 1; j < start; j++) {
+          u32 i = afl->dist_snapshot_cursor++;
+          afl->dist_queue_buf[i] = afl->queue_buf[i];
+          if (distance_budget_exhausted(deadline_us))
+            return DISTANCE_SERVICE_BUDGET_EXHAUSTED;
 
-    if (afl->stop_soon) break;
-    if (afl->dist_queue_buf[j]->disabled) { continue; }
+        }
 
-    for (u32 i = 0; i < j; i++) {
+        afl->dist_update_phase = DISTANCE_UPDATE_RESIZE;
+        break;
 
-      if (afl->stop_soon) break;
-      if (afl->dist_queue_buf[i]->disabled) { continue; }
+      case DISTANCE_UPDATE_RESIZE:
 
-      if (afl->distance_matrix_cache[i][j - i - 1] < 0) {
+        while (afl->dist_prepare_row < afl->dist_target_queue_buf_len) {
 
-        double distance =
-            get_trace_mini_distance(afl, afl->dist_queue_buf[i]->trace_mini,
-                                    afl->dist_queue_buf[j]->trace_mini);
+          u32 i = afl->dist_prepare_row++;
+          afl->distance_matrix_cache[i] = (double *)afl_realloc(
+              (void **)&afl->distance_matrix_cache[i],
+              (afl->dist_target_queue_buf_len - i - 1) * sizeof(double));
+          if (unlikely(!afl->distance_matrix_cache[i])) { PFATAL("alloc"); }
+          if (distance_budget_exhausted(deadline_us))
+            return DISTANCE_SERVICE_BUDGET_EXHAUSTED;
 
-        afl->distance_matrix_cache[i][j - i - 1] = distance;
+        }
 
-        // dist_queue_buf[i]->WCSD_dist += dist;
-        // q_j->WCSD_dist += dist;
+        /* Publish the expanded snapshot only after every matrix row is ready.
+         */
+        afl->dist_queue_buf_len = afl->dist_target_queue_buf_len;
+        afl->dist_update_phase = DISTANCE_UPDATE_REPAIR;
+        break;
 
-      }
+      case DISTANCE_UPDATE_REPAIR:
+
+        while (afl->dist_repair_row < afl->dist_new_row) {
+
+          u32 j = afl->dist_repair_row;
+
+          if (afl->dist_queue_buf[j]->disabled) {
+
+            afl->dist_repair_row++;
+            afl->dist_repair_col = 0;
+            if (distance_budget_exhausted(deadline_us))
+              return DISTANCE_SERVICE_BUDGET_EXHAUSTED;
+            continue;
+
+          }
+
+          while (afl->dist_repair_col < j) {
+
+            u32 i = afl->dist_repair_col++;
+            if (!afl->dist_queue_buf[i]->disabled &&
+                afl->distance_matrix_cache[i][j - i - 1] < 0) {
+
+              double distance = get_trace_mini_distance(
+                  afl, afl->dist_queue_buf[i]->trace_mini,
+                  afl->dist_queue_buf[j]->trace_mini);
+              afl->distance_matrix_cache[i][j - i - 1] = distance;
+              afl->dist_pair_count++;
+
+            }
+
+            if (distance_budget_exhausted(deadline_us))
+              return DISTANCE_SERVICE_BUDGET_EXHAUSTED;
+
+          }
+
+          afl->dist_repair_row++;
+          afl->dist_repair_col = 0;
+
+        }
+
+        afl->dist_update_phase = DISTANCE_UPDATE_NEW_ROWS;
+        break;
+
+      case DISTANCE_UPDATE_NEW_ROWS:
+
+        while (afl->dist_new_row < afl->dist_queue_buf_len) {
+
+          u32 j = afl->dist_new_row;
+          while (afl->dist_new_col < j) {
+
+            u32 i = afl->dist_new_col++;
+            if (afl->dist_queue_buf[i]->disabled ||
+                afl->dist_queue_buf[j]->disabled) {
+
+              afl->distance_matrix_cache[i][j - i - 1] = -1.0;
+
+            } else {
+
+              double distance = get_trace_mini_distance(
+                  afl, afl->dist_queue_buf[i]->trace_mini,
+                  afl->dist_queue_buf[j]->trace_mini);
+              afl->distance_matrix_cache[i][j - i - 1] = distance;
+              afl->dist_pair_count++;
+
+            }
+
+            if (afl->dist_new_col == j) break;
+            if (distance_budget_exhausted(deadline_us))
+              return DISTANCE_SERVICE_BUDGET_EXHAUSTED;
+
+          }
+
+          /* A row becomes visible to schedulers only after all of its pairs
+             have been computed. */
+          afl->last_dist_queue_buf_len = j + 1;
+          afl->dist_completed_row_count++;
+          afl->dist_new_row++;
+          afl->dist_new_col = 0;
+
+          if (afl->dist_new_row == afl->dist_queue_buf_len) {
+
+            afl->dist_update_phase = DISTANCE_UPDATE_IDLE;
+            return DISTANCE_SERVICE_COMPLETE;
+
+          }
+
+          if (distance_budget_exhausted(deadline_us))
+            return DISTANCE_SERVICE_BUDGET_EXHAUSTED;
+
+        }
+
+        afl->dist_update_phase = DISTANCE_UPDATE_IDLE;
+        return DISTANCE_SERVICE_COMPLETE;
+
+      case DISTANCE_UPDATE_IDLE:
+        return DISTANCE_SERVICE_COMPLETE;
+
+      default:
+        FATAL("Invalid distance update phase %u", afl->dist_update_phase);
 
     }
 
-  }
-
-  /* , disabled-1 */
-
-  for (u32 j = start; j < afl->dist_queue_buf_len; j++) {
-
-    if (afl->stop_soon) break;
-
-    for (u32 i = 0; i < j; i++) {
-
-      if (afl->stop_soon) break;
-
-      if (afl->dist_queue_buf[i]->disabled ||
-          afl->dist_queue_buf[j]->disabled) {
-
-        afl->distance_matrix_cache[i][j - i - 1] = -1.0;
-        continue;
-
-      }
-
-      double distance =
-          get_trace_mini_distance(afl, afl->dist_queue_buf[i]->trace_mini,
-                                  afl->dist_queue_buf[j]->trace_mini);
-
-      afl->distance_matrix_cache[i][j - i - 1] = distance;
-
-    }
-
-    afl->last_dist_queue_buf_len++;  // 
+    if (afl->dist_update_phase != DISTANCE_UPDATE_IDLE &&
+        distance_budget_exhausted(deadline_us))
+      return DISTANCE_SERVICE_BUDGET_EXHAUSTED;
 
   }
 
-  // DCPF_LOG("End update distance matrix");
+  return DISTANCE_SERVICE_STOPPED;
 
 }
 
-void *update_distance_matrix_thread(void *arg) {
+void maybe_service_distance_matrix(afl_state_t *afl) {
 
-  afl_state_t *afl = (afl_state_t *)arg;
+  if (unlikely(afl->last_dist_queue_buf_len > afl->dist_queue_buf_len)) {
 
-  // TID
-  pid_t tid = syscall(SYS_gettid);
-  int   nice_value = 10;  // nice10
-
-  // nice
-  if (setpriority(PRIO_PROCESS, tid, nice_value) == -1) {
-
-    perror("setpriority ");
-
-  } else {
-
-    DCPF_LOG(" %d nice %d", tid, nice_value);
+    FATAL("Invalid distance prefix: ready=%u snapshot=%u",
+          afl->last_dist_queue_buf_len, afl->dist_queue_buf_len);
 
   }
 
-  DCPF_LOG("Start update distance matrix thread");
+  if (afl->dist_update_phase == DISTANCE_UPDATE_IDLE &&
+      afl->queued_items <= afl->dist_queue_buf_len)
+    return;
 
-  while (1) {
+  u64 start_us = distance_monotonic_time_us();
+  if (afl->dist_throttled && start_us < afl->next_dist_time_us) return;
 
-    if (afl->stop_soon) break;
+  u8 periodic_trigger = afl->dist_throttled;
+  u64 pairs_before = afl->dist_pair_count;
+  u64 rows_before = afl->dist_completed_row_count;
 
-    //  master main thread 
-    pthread_mutex_lock(&afl->dist_cond_mutex);
-    while (!atomic_load(&afl->cal_dist_matrix) && !afl->stop_soon) {
+  afl->dist_invocation_count++;
+  if (periodic_trigger)
+    afl->dist_periodic_invocation_count++;
+  else
+    afl->dist_immediate_invocation_count++;
 
-      // DCPF_LOG("master...");
-      pthread_cond_wait(&afl->dist_cond,
-                        &afl->dist_cond_mutex);  // 
+  if (afl->dist_update_phase == DISTANCE_UPDATE_IDLE)
+    begin_distance_matrix_update(afl);
 
-    }
+  u64 deadline_us = start_us + afl->dist_time_limit_us;
+  enum distance_service_result result =
+      update_distance_matrix_until(afl, deadline_us);
+  u64 end_us = distance_monotonic_time_us();
+  u64 elapsed_us = end_us - start_us;
 
-    pthread_mutex_unlock(&afl->dist_cond_mutex);
+  afl->dist_total_time_us += elapsed_us;
+  if (elapsed_us > afl->dist_max_round_time_us)
+    afl->dist_max_round_time_us = elapsed_us;
 
-    if (afl->stop_soon) break;
+  if (result == DISTANCE_SERVICE_BUDGET_EXHAUSTED) {
 
-    // 
-    u64 start = get_cur_time();
-    update_distance_matrix(afl);
-    afl->total_dist_time += ((get_cur_time() - start) / 1000.0);
-    DCPF_LOG("CALCULATE dist for %u seeds total use %f s",
-             afl->dist_queue_buf_len, afl->total_dist_time);
+    afl->dist_budget_exhausted_count++;
+    afl->dist_throttled = 1;
+    afl->next_dist_time_us = end_us + afl->dist_period_us;
 
-    // 
-    pthread_mutex_lock(&afl->dist_cond_mutex);
-    atomic_store(&afl->cal_dist_matrix, false);
-    pthread_cond_signal(&afl->dist_cond);
-    pthread_mutex_unlock(&afl->dist_cond_mutex);
+  } else if (result == DISTANCE_SERVICE_COMPLETE) {
+
+    afl->dist_throttled = 0;
+    afl->next_dist_time_us = 0;
 
   }
 
-  DCPF_LOG("End update distance matrix thread");
+  const char *result_name =
+      result == DISTANCE_SERVICE_COMPLETE
+          ? "complete"
+          : (result == DISTANCE_SERVICE_BUDGET_EXHAUSTED ? "budget_exhausted"
+                                                         : "stopped");
 
-  return NULL;
+  DCPF_LOG(
+      "DISTANCE_ROUND invocation=%llu trigger=%s result=%s elapsed_us=%llu "
+      "total_us=%llu pairs=%llu rows=%llu ready=%u snapshot=%u queued=%u",
+      afl->dist_invocation_count, periodic_trigger ? "periodic" : "immediate",
+      result_name, elapsed_us, afl->dist_total_time_us,
+      afl->dist_pair_count - pairs_before,
+      afl->dist_completed_row_count - rows_before,
+      afl->last_dist_queue_buf_len, afl->dist_queue_buf_len,
+      afl->queued_items);
+
+}
+
+void log_distance_summary(afl_state_t *afl) {
+
+  u64 end_us = distance_monotonic_time_us();
+  u64 elapsed_us = afl->dist_worker_start_us
+                       ? end_us - afl->dist_worker_start_us
+                       : 0;
+
+  double average_invocation_us =
+      afl->dist_invocation_count
+          ? (double)afl->dist_total_time_us / afl->dist_invocation_count
+          : 0.0;
+  double average_pair_us =
+      afl->dist_pair_count
+          ? (double)afl->dist_total_time_us / afl->dist_pair_count
+          : 0.0;
+  double overhead_percent =
+      elapsed_us ? (double)afl->dist_total_time_us * 100.0 / elapsed_us : 0.0;
+
+  u8 pending = afl->dist_update_phase != DISTANCE_UPDATE_IDLE ||
+               afl->queued_items > afl->dist_queue_buf_len;
+
+  DCPF_LOG(
+      "DISTANCE_SUMMARY invocations=%llu immediate=%llu periodic=%llu "
+      "pairs=%llu rows=%llu total_us=%llu average_invocation_us=%.3f "
+      "average_pair_us=%.6f max_round_us=%llu budget_exhausted=%llu "
+      "worker_elapsed_us=%llu overhead_percent=%.6f pending=%u ready=%u "
+      "snapshot=%u queued=%u limit_us=%llu period_ms=%llu",
+      afl->dist_invocation_count, afl->dist_immediate_invocation_count,
+      afl->dist_periodic_invocation_count, afl->dist_pair_count,
+      afl->dist_completed_row_count, afl->dist_total_time_us,
+      average_invocation_us, average_pair_us, afl->dist_max_round_time_us,
+      afl->dist_budget_exhausted_count, elapsed_us, overhead_percent,
+      (u32)pending,
+      afl->last_dist_queue_buf_len, afl->dist_queue_buf_len,
+      afl->queued_items, afl->dist_time_limit_us,
+      afl->dist_period_us / 1000ULL);
 
 }
 
@@ -1334,10 +1444,8 @@ u8 sync_one_seed(afl_state_t *afl, u8 *mem, u32 len, u8 *syncing_party,
     afl->syncing_party = syncing_party;
     afl->syncing_case = 0;
     sync_res = save_if_interesting(afl, mem, new_len, fault, force_add);
-    if(!afl->fuzz_LB_seed) {
-      afl->queued_imported += sync_res;
-      show_stats(afl);
-    } 
+    afl->queued_imported += sync_res;
+    show_stats(afl);
     afl->syncing_party = 0;
 
     // if (sync_res)
@@ -1372,7 +1480,7 @@ void sync_subdomain_seeds_from_db(afl_state_t *afl, u32 subdomain_id) {
 
     if (afl->stop_soon) { break; }
 
-    // 
+    // 维护一个全局种子已经同步过的哈希表
     u8 *GS_flag = afl_realloc((void **)&afl->global_seed_flag,
                               sizeof(u32) * (global_id + 1));
     if (!GS_flag) FATAL("afl_realloc error");
@@ -1407,14 +1515,14 @@ void sync_subdomain_seeds_from_db(afl_state_t *afl, u32 subdomain_id) {
     if (result) {
 
       afl->queue_top->subdomain_id = subdomain_id;
-      afl->queue_top->disabled = 0;  // 
+      afl->queue_top->disabled = 0;  // 启用
 
       // sync seed state
       afl->queue_top->passed_det = dbq->passed_det;
       afl->queue_top->trim_done = dbq->trim_done;
       afl->queue_top->was_fuzzed = dbq->was_fuzzed;
       afl->queue_top->fuzz_level = dbq->fuzz_level;
-      // afl->queue_top->handicap = 0;  // syn
+      // afl->queue_top->handicap = 0;  // 覆盖syn时赋的值
       // afl->queue_top->depth = 0;
 
       ++sync_from_db;
@@ -1446,7 +1554,7 @@ void update_subdomain(afl_state_t *afl) {
   DCPF_LOG("get subdomain_%s, id=%u, r=%f", afl->sync_id, afl->sd.id,
            afl->sd.r);
 
-  /*  */
+  /* 重置任务相关属性 */
   afl->max_reward = -DBL_MAX;
   afl->max_potential = -DBL_MAX;
   afl->min_reward = DBL_MAX;
@@ -1456,14 +1564,14 @@ void update_subdomain(afl_state_t *afl) {
 
     struct queue_entry *q = afl->queue_buf[i];
     q->aggregation = 0;
-    q->in_subdomain = 0;  // ，
+    q->in_subdomain = 0;
     q->center_deviation = DBL_MAX;
     // q->potential = 0;
     // q->worth = 0;
 
   }
 
-  /*  */
+  /* 重置种子选择 */
   for (u32 i = 0; i < afl->fsrv.map_size; ++i) {
 
     if (afl->top_rated[i]) {
@@ -1475,7 +1583,7 @@ void update_subdomain(afl_state_t *afl) {
 
   }
 
-  /*  */
+  /* 更新所有旧种子的任务偏移 */
 
   u32 task_seed_count = 0;
 
@@ -1497,7 +1605,7 @@ void update_subdomain(afl_state_t *afl) {
 
     }
 
-    // , 
+    // 重新选择种子, 仅限半径内
     decompress_trace_mini(afl->fsrv.trace_bits, q->trace_mini,
                           afl->fsrv.map_size);
     update_bitmap_score(afl, q);
@@ -1510,7 +1618,7 @@ void update_subdomain(afl_state_t *afl) {
              (double)sum_time / task_seed_count,
              (double)sum_size / task_seed_count);
 
-  /*  */
+  /* 更新种子选择 */
   cull_queue(afl);
   DCPF_LOG("TASK has %u seeds in task", task_seed_count);
   DCPF_DEBUG("queued_favored=%u, pending_favored=%u, pending_not_fuzzed=%u",
@@ -1521,7 +1629,7 @@ void update_subdomain(afl_state_t *afl) {
 
 void do_cooperation(afl_state_t *afl) {
 
-  afl->not_do_cooperation = 1;  // ，
+  afl->not_do_cooperation = 1;  // 协同的种子自己保留，不再协同
   afl->doing_cooperation = 1;
 
   char   tmp[50];
@@ -1543,7 +1651,7 @@ void do_cooperation(afl_state_t *afl) {
 
     } else {
 
-      // 
+      // 检查是否弹出所有元素
       if (reply->type == REDIS_REPLY_NIL) {
 
         DCPF_LOG("  total pop %u seeds, %u saved.", coop_num, save_num);
@@ -1559,13 +1667,13 @@ void do_cooperation(afl_state_t *afl) {
 
       snprintf(tmp, 50, "cooperation_%u", afl->total_coop_add++);
 
-      // 
+      // 非强制添加
       ++afl->peer_sync_count;
       u8 result = sync_one_seed(afl, mem, len, tmp, 0);
       if (result) {
 
         save_num++;
-        // 
+        // 记录保留协同种子的最大中心偏离
         if (afl->queue_top->center_deviation > adjust_r)
           adjust_r = afl->queue_top->center_deviation;
 
@@ -1573,7 +1681,7 @@ void do_cooperation(afl_state_t *afl) {
 
       fflush(stdout);
 
-      // 
+      // 释放资源
       freeReplyObject(reply);
       coop_num++;
 
@@ -1584,19 +1692,19 @@ void do_cooperation(afl_state_t *afl) {
   }
 
   afl->not_do_cooperation = 0;
-  afl->doing_cooperation = 0;  // ，
+  afl->doing_cooperation = 0;  // 协同的种子自己保留，不再协同
 
-  /*  */
+  /* 根据半径变化调整子域范围 */
 
   if (adjust_r > afl->sd.r) {
 
-    // 
-    DCPF_LOG(" %f -> %f", afl->sd.r, adjust_r);
+    // 协同阶段调整半径
+    DCPF_LOG("调整任务半径 %f -> %f", afl->sd.r, adjust_r);
     afl->sd.r = adjust_r;
-    // 
+    // 更新后的半径同步到数据库
     set_subdomain_radius(afl->redis_connect, afl->sync_id, afl->sd.r);
 
-    // 
+    // 子域调整
     u32 count = 0;
     memcpy(afl->store_trace, afl->fsrv.trace_bits, afl->fsrv.map_size);
     for (u32 i = 0; i < afl->queued_items; i++) {
@@ -1605,9 +1713,9 @@ void do_cooperation(afl_state_t *afl) {
       if (!q->in_subdomain && q->center_deviation <= afl->sd.r) {
 
         q->in_subdomain = 1;
-        // DCPF_DEBUG("  seed #%u ", q->id);
+        // DCPF_DEBUG("  seed #%u 移动到任务内", q->id);
         ++count;
-        // 
+        // 更新种子选择
         decompress_trace_mini(afl->fsrv.trace_bits, q->trace_mini,
                               afl->fsrv.map_size);
         update_bitmap_score(afl, q);
@@ -1618,16 +1726,16 @@ void do_cooperation(afl_state_t *afl) {
 
     memcpy(afl->fsrv.trace_bits, afl->store_trace, afl->fsrv.map_size);
 
-    DCPF_LOG("：%u ", count);
+    DCPF_LOG("移动入任务：%u 种子", count);
 
   }
 
 }
 
 /**
- * @description: ，fuzz，
+ * @description: 执行负载均衡任务，消息队列取种子fuzz，结果保存且流转
  * @param {afl_state_t} *afl
- * @return {*} fuzzID， UINT32_MAX。
+ * @return {*} 下一个fuzz的种子ID， UINT32_MAX表示出错。
  */
 u32 do_load_balance(afl_state_t *afl) {
 
@@ -1636,6 +1744,7 @@ u32 do_load_balance(afl_state_t *afl) {
   afl->not_do_cooperation = 1;
   afl->not_cal_deviation = 1;
 
+  u32  balance_num = 0;
   char tmp[50];
 
   redisReply *reply = redisCommand(afl->redis_connect,
@@ -1666,7 +1775,7 @@ u32 do_load_balance(afl_state_t *afl) {
 
     } else {
 
-      // ，
+      // 种子内容缓存进内存，不持久化
       if (!afl->queue_top->testcase_buf) {
 
         FATAL("testcase_buf is NULL, len = %u", len);
@@ -1675,9 +1784,11 @@ u32 do_load_balance(afl_state_t *afl) {
 
       ret_next_fuzz = afl->queue_top->id;
 
+      balance_num++;
+
     }
 
-    // 
+    // 释放资源
     freeReplyObject(reply);
 
   }
@@ -1705,16 +1816,16 @@ u32 do_load_balance(afl_state_t *afl) {
 //     return NULL;
 //   }
 
-//   // 
+//   // 读取文件直到结束
 //   while (!feof(file)) {
 
 //     u32 point_id;
 
-//     //  id (4 )
+//     // 读取 id (4 字节)
 //     if (fread(&point_id, sizeof(u32), 1, file) != 1) {
 
 //       DCPF_DEBUG("point_id end");
-//       break;  // 
+//       break;  // 到文件结尾
 //     }
 //     if (point_id >= map_size) {
 
@@ -1724,15 +1835,15 @@ u32 do_load_balance(afl_state_t *afl) {
 
 //     InstrumentPointMap *cur = &ret[point_id];
 
-//     //  vector  (size_t ， 4  8 )
+//     // 读取 vector 的大小 (size_t 类型，通常为 4 或 8 字节)
 //     size_t vec_size;
 //     if (fread(&vec_size, sizeof(size_t), 1, file) != 1) {
 
 //       DCPF_DEBUG("vec_size end");
-//       break;  // 
+//       break;  // 到文件结尾
 //     }
 
-//     //  successor points
+//     // 分配内存来存储 successor points
 //     cur->succ_num = vec_size;
 //     assert(cur->succ_num < UINT32_MAX / sizeof(u32));
 //     if (cur->succ_num > 0) {
@@ -1746,15 +1857,15 @@ u32 do_load_balance(afl_state_t *afl) {
 //       }
 //     }
 
-//     //  vector 
+//     // 读取 vector 中的所有元素
 //     if (fread(cur->succ_point, sizeof(u32), vec_size, file) != vec_size) {
 
-//       free(cur->succ_point);  // 
+//       free(cur->succ_point);  // 释放内存
 //       FATAL("read succ_point error!");
-//       break;  // 
+//       break;  // 到文件结尾
 //     }
 
-//     // //  point_map (， id  succ_point)
+//     // // 处理 point_map (例如，打印 id 和 succ_point)
 //     // printf("%u:", point_id);
 //     // for (size_t i = 0; i < cur->succ_num; ++i) {
 
@@ -1786,7 +1897,7 @@ u32 do_load_balance(afl_state_t *afl) {
 //   }
 // }
 
-// // （GCC/Clang）
+// // 使用编译器内置指令加速位扫描（GCC/Clang）
 // #if defined(__GNUC__) || defined(__clang__)
 //   #define USE_BUILTIN_CTZ 1
 // #endif
@@ -1799,14 +1910,14 @@ u32 do_load_balance(afl_state_t *afl) {
 //   for (size_t byte_idx = 0; byte_idx < bitmap_size; ++byte_idx) {
 
 //     uint8_t byte = bitmap[byte_idx];
-//     if (byte == 0) continue;  // 
+//     if (byte == 0) continue;  // 快速跳过空字节
 
-//     // 
+//     // 位扫描处理非零字节
 //     size_t base_pos = byte_idx * 8;
 
 //     while (byte != 0) {
 
-//       // 1
+//       // 找到最低有效位的1的位置
 // #if USE_BUILTIN_CTZ
 //   #ifdef _WIN32
 //       unsigned long bit_pos;
@@ -1815,7 +1926,7 @@ u32 do_load_balance(afl_state_t *afl) {
 //       unsigned bit_pos = __builtin_ctz(byte);
 //   #endif
 // #else
-//       // CTZ（Count Trailing Zeros）
+//       // 手动实现CTZ（Count Trailing Zeros）
 //       static const uint8_t multiply_de_bruijn_bitpos[32] = {
 
 //           0,  1,  28, 2,  29, 14, 24, 3, 30, 22, 20, 15, 25, 17, 4,  8,
@@ -1826,9 +1937,9 @@ u32 do_load_balance(afl_state_t *afl) {
 //                                     27];
 // #endif
 
-//       // bit
+//       // 记录位置并清除已处理的bit
 //       output[count++] = base_pos + bit_pos;
-//       byte &= byte - 1;  // 1
+//       byte &= byte - 1;  // 清除最低有效位的1
 //     }
 //   }
 
@@ -1847,14 +1958,14 @@ u32 do_load_balance(afl_state_t *afl) {
 //   for (u32 byte_idx = 0; byte_idx < (trace_mini_size >> 3); ++byte_idx) {
 
 //     uint8_t byte = q_bitmap[byte_idx];
-//     if (byte == 0) continue;  // 
+//     if (byte == 0) continue;  // 快速跳过空字节
 
-//     // 
+//     // 位扫描处理非零字节
 //     u32 base_pos = byte_idx * 8;
 
 //     while (byte != 0) {
 
-//       // 1
+//       // 找到最低有效位的1的位置
 // #if USE_BUILTIN_CTZ
 //   #ifdef _WIN32
 //       unsigned long bit_pos;
@@ -1863,7 +1974,7 @@ u32 do_load_balance(afl_state_t *afl) {
 //       unsigned bit_pos = __builtin_ctz(byte);
 //   #endif
 // #else
-//       // CTZ（Count Trailing Zeros）
+//       // 手动实现CTZ（Count Trailing Zeros）
 //       static const uint8_t multiply_de_bruijn_bitpos[32] = {
 
 //           0,  1,  28, 2,  29, 14, 24, 3, 30, 22, 20, 15, 25, 17, 4,  8,
@@ -1874,7 +1985,7 @@ u32 do_load_balance(afl_state_t *afl) {
 //                                     27];
 // #endif
 
-//       // bit
+//       // 记录位置并清除已处理的bit
 //       u32 offset = base_pos + bit_pos;
 //       q_area[offset >> 3] |= (u8)(1U << (offset & 0x07));
 //       for (u32 j = 0; j < area_map[offset].succ_num; ++j) {
@@ -1883,7 +1994,7 @@ u32 do_load_balance(afl_state_t *afl) {
 //         q_area[pos >> 3] |= (u8)(1U << (pos & 0x07));
 //       }
 
-//       byte &= byte - 1;  // 1
+//       byte &= byte - 1;  // 清除最低有效位的1
 //     }
 //   }
 
@@ -1896,18 +2007,18 @@ u32 do_load_balance(afl_state_t *afl) {
 //   }
 // }
 
-// 
+// 种子选择快排
 int partition(struct queue_entry **arr, int low, int high) {
 
-  double pivot = arr[high]->priority;  // 
-  int    i = low - 1;  // i
+  double pivot = arr[high]->priority;  // 选择最后一个元素作为枢轴
+  int    i = low - 1;  // i指向较大元素的最后一个位置
 
   for (int j = low; j < high; j++) {
 
     if (arr[j]->priority > pivot) {
 
       i++;
-      //  arr[i]  arr[j]
+      // 交换 arr[i] 和 arr[j]
       struct queue_entry *temp = arr[i];
       arr[i] = arr[j];
       arr[j] = temp;
@@ -1916,16 +2027,16 @@ int partition(struct queue_entry **arr, int low, int high) {
 
   }
 
-  // 
+  // 将基准元素放到正确位置
   struct queue_entry *temp = arr[i + 1];
   arr[i + 1] = arr[high];
   arr[high] = temp;
 
-  return i + 1;  // 
+  return i + 1;  // 返回基准元素的索引
 
 }
 
-// 
+// 快排函数
 void quickSort(struct queue_entry **arr, int low, int high) {
 
   if (low < high) {
@@ -1941,7 +2052,7 @@ void quickSort(struct queue_entry **arr, int low, int high) {
 /* load balance functions */
 
 /**
- * @description: （）
+ * @description: 比较函数（对种子优先级降序排序）
  * @param {void} *a
  * @param {void} *b
  * @return {*}
@@ -1950,14 +2061,14 @@ int compare_seed(const void *a, const void *b) {
 
   struct queue_entry *sa = *(struct queue_entry **)a;
   struct queue_entry *sb = *(struct queue_entry **)b;
-  if (sa->priority < sb->priority) return 1;  // 
+  if (sa->priority < sb->priority) return 1;  // 降序排列
   if (sa->priority > sb->priority) return -1;
   return 0;
 
 }
 
 /**
- * @description:  c ，
+ * @description: 子域 c 根据其接收窗口大小，取种子压入消息队列
  * @param {afl_state_t} *afl
  * @param {queue_entry} *
  * @param {u32} start
@@ -2051,7 +2162,7 @@ u32 select_recv_domain(afl_state_t *afl) {
 
 }
 
-/*  */
+/* 创建负载均衡别名表 */
 void update_subdomain_alias_table(afl_state_t *afl) {
 
   u32 n = afl->subdomain_num, nSmall = 0, nLarge = n - 1;
@@ -2077,7 +2188,7 @@ void update_subdomain_alias_table(afl_state_t *afl) {
   double recv_weight = 0.0;
   for (u32 i = 0; i < n; i++) {
 
-    // 
+    // 非线性扩大采样频率
     afl->subdomain_array[i].sample_weight =
         pow(afl->subdomain_array[i].contribute, 2);
 
@@ -2207,14 +2318,14 @@ void update_subdomain_alias_table(afl_state_t *afl) {
 
   }
 
-  // 
+  // 释放内存
   ck_free(P);
   ck_free(Small);
   ck_free(Large);
 
 }
 
-/* master  sync_fuzzer LB ， */
+/* master 在 sync_fuzzer前优先同步 LB 贡献种子，统计贡献 */
 void sync_LB_seeds(afl_state_t *afl, redisContext *ctx, char *sync_id) {
 
   u32  pop_num = 0, save_num = 0;
@@ -2231,13 +2342,13 @@ void sync_LB_seeds(afl_state_t *afl, redisContext *ctx, char *sync_id) {
 
     } else {
 
-      // 
+      // 检查是否弹出所有元素
       if (reply->type == REDIS_REPLY_NIL) {
 
         DCPF_LOG("  total pop %u seeds, %u saved.", pop_num, save_num);
         if (save_num > 0) {
 
-          // 
+          // 记录贡献
           int      subdomain_id = -1;
           gpointer value = g_hash_table_lookup(afl->Iname_Sid_map, sync_id);
           if (value != NULL) { subdomain_id = GPOINTER_TO_INT(value) - 1; }
@@ -2265,11 +2376,11 @@ void sync_LB_seeds(afl_state_t *afl, redisContext *ctx, char *sync_id) {
 
       snprintf(tmp, 50, "LB_%u", afl->total_LB_add++);
 
-      // 
+      // 非强制添加
       u8 result = sync_one_seed(afl, mem, len, tmp, 0);
       if (result) { save_num++; }
 
-      // 
+      // 释放资源
       freeReplyObject(reply);
       pop_num++;
 
@@ -2279,7 +2390,7 @@ void sync_LB_seeds(afl_state_t *afl, redisContext *ctx, char *sync_id) {
 
 }
 
-/*  LB  */
+/* 扫描 LB 贡献队列 */
 void scan_LB_report(afl_state_t *afl) {
 
   redisContext *ctx = afl->redis_connect;
@@ -2297,16 +2408,16 @@ void scan_LB_report(afl_state_t *afl) {
 
     }
 
-    // 
+    // 更新游标
     snprintf(cursor, sizeof(cursor), "%s", reply->element[0]->str);
 
-    //  keys
+    // 遍历匹配的 keys
     redisReply *keys = reply->element[1];
     for (size_t i = 0; i < keys->elements; i++) {
 
       const char *key = keys->element[i]->str;
 
-      //  sync_id（ "_LB_report" ）
+      // 提取 sync_id（去掉 "_LB_report" 后缀）
       size_t len = strlen(key);
       if (len <= strlen("_LB_report")) continue;
 
@@ -2314,7 +2425,7 @@ void scan_LB_report(afl_state_t *afl) {
       snprintf(sync_id, sizeof(sync_id), "%.*s",
                (int)(len - strlen("_LB_report")), key);
 
-      // 
+      // 弹出元素
       // DCPF_DEBUG("LPOP %s_LB_report", sync_id);
       sync_LB_seeds(afl, ctx, sync_id);
 
@@ -2325,4 +2436,3 @@ void scan_LB_report(afl_state_t *afl) {
   } while (strcmp(cursor, "0") != 0);
 
 }
-

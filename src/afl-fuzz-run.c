@@ -669,7 +669,7 @@ abort_calibration:
 
 void sync_fuzzers(afl_state_t *afl) {
 
-  // master LB
+  // master 先检查是否有LB贡献
   scan_LB_report(afl);
 
   if (unlikely(afl->afl_env.afl_no_sync)) { return; }
@@ -679,7 +679,7 @@ void sync_fuzzers(afl_state_t *afl) {
                            afl->start_time);
   DCPF_DEBUG("MASTER sync start at %s", time_tmp);
 
-  afl->not_do_cooperation = 1;  // ，
+  afl->not_do_cooperation = 1;  // 主节点调用同步汇总种子，此时不协同
 
   DIR           *sd;
   struct dirent *sd_ent;
@@ -810,7 +810,7 @@ void sync_fuzzers(afl_state_t *afl) {
 
     }
 
-    // subdimainid
+    // 对应subdimain的id
     u32      old_import = afl->queued_imported;
     int      subdomain_id = -1;
     gpointer value = g_hash_table_lookup(afl->Iname_Sid_map, sd_ent->d_name);
@@ -827,7 +827,7 @@ void sync_fuzzers(afl_state_t *afl) {
       afl->syncing_case = next_min_accept;
       next_min_accept++;
 
-      // 
+      // 初始种子不要重复同步
       if (strstr(namelist[o]->d_name, ",orig:") != NULL) continue;
 
       /* Allow this to fail in case the other fuzzer is resuming or so... */
@@ -874,7 +874,7 @@ void sync_fuzzers(afl_state_t *afl) {
 
   close_sync:
 
-    // subdimain, ，
+    // 对应subdimain的贡献, 可能没新种子，直接到这里
     if (subdomain_id >= 0) {
 
       u32 new_contri = afl->queued_imported - old_import;

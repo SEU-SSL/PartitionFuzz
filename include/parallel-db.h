@@ -1,6 +1,6 @@
 /*******************************************************************
  *
- *                            DB
+ *                            DB操作
  *
  *******************************************************************/
 
@@ -23,7 +23,7 @@ typedef struct db_queue_entry {
   u64 handicap,                         /* Number of queue cycles behind    */
       depth;                            /* Path depth                       */
 
-  /*  */
+  /* 避免不同簇得到同样的种子后进行重复操作 */
   u32 len;                              /* length of seed                   */
   u8 *content;                          /* binary of seed                   */
 

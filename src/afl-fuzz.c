@@ -1442,7 +1442,7 @@ int main(int argc, char **argv_orig, char **envp) {
   }
 
   afl_redis_init(afl, "127.0.0.1", 6379, afl->redis_db);
-  // 
+  // 分配内存
   #ifdef PATH_SIZE
   afl->path = ck_alloc(PATH_SIZE * sizeof(u8));
   #endif
@@ -2154,7 +2154,7 @@ int main(int argc, char **argv_orig, char **envp) {
   afl->exp_fd = fopen((char *)filename, "a");
   if (afl->exp_fd == NULL) {
 
-    FATAL("");
+    FATAL("无法打开文件");
 
   }
 
@@ -2535,7 +2535,7 @@ int main(int argc, char **argv_orig, char **envp) {
 
   // char *file_path = getenv("INSTRUMENT_MAP_PATH");
   // if (!file_path) FATAL("INSTRUMENT_MAP not set!");
-  // DCPF_LOG("，from %s...", file_path);
+  // DCPF_LOG("加载位图区域映射，from %s...", file_path);
   // afl->inst_area = load_instrument_map(file_path, afl->fsrv.map_size);
 
   if (likely(!afl->afl_env.afl_no_startup_calibration)) {
@@ -2651,16 +2651,11 @@ int main(int argc, char **argv_orig, char **envp) {
 
   // real start time, we reset, so this works correctly with -V
   afl->start_time = get_cur_time();
+  start_distance_statistics(afl);
 
-  /*  */
-  if (afl->is_main_node || afl->is_secondary_node) {
-
-    pthread_t tid;
-    pthread_create(&tid, NULL, update_distance_matrix_thread, (void *)afl);
-    bind_all_cpu(afl->cpu_to_bind, tid);
-    pthread_detach(tid);
-
-  }
+  OKF("Distance service limit: %llu us; retry period after exhaustion: %llu "
+      "ms",
+      afl->dist_time_limit_us, afl->dist_period_us / 1000ULL);
 
   while (likely(!afl->stop_soon)) {
 
@@ -2914,7 +2909,7 @@ int main(int argc, char **argv_orig, char **envp) {
 
           if (likely(afl->pending_favored > 1)) {
 
-            //  favored && not_fuzzed && 
+            // 找出 favored && not_fuzzed && 距离测试集最远的种子
             // DCPF_LOG("dist seed num: %u/%u", last_dist_queue_buf_len,
             //          afl->queued_items);
 
@@ -2926,10 +2921,10 @@ int main(int argc, char **argv_orig, char **envp) {
             u32 candidate_num = 0;
             u32 execution_num = 0;
 
-            // ，
+            // 计算距离，保存极值归一化
             for (u32 i = 0; i < last_dist_queue_buf_len; i++) {
 
-              // 
+              // 过滤只看候选集
               if (!afl->queue_buf[i]->favored ||
                   afl->queue_buf[i]->was_fuzzed || afl->queue_buf[i]->disabled)
                 continue;
@@ -2951,7 +2946,7 @@ int main(int argc, char **argv_orig, char **envp) {
 
               }
 
-              if (min_dist == DBL_MAX) {  // 
+              if (min_dist == DBL_MAX) {  // 执行集空
 
               } else {
 
@@ -2978,10 +2973,10 @@ int main(int argc, char **argv_orig, char **envp) {
 
               double max_score = -DBL_MAX;
 
-              // 
+              // 候选集中比较选下一个加入执行集
               for (u32 i = 0; i < last_dist_queue_buf_len; i++) {
 
-                // 
+                // 过滤只看候选集
                 if (!afl->queue_buf[i]->favored ||
                     afl->queue_buf[i]->was_fuzzed ||
                     afl->queue_buf[i]->disabled)
@@ -3015,7 +3010,7 @@ int main(int argc, char **argv_orig, char **envp) {
 
                 }
 
-                // ,，
+                // 结合执行时间,太长时间的优先选，会导致低效种子产出
                 double score = 0.7 * n_dist_to_ES + 0.3 * (1.0 - n_factor);
                 q->priority = score;
 
@@ -3140,23 +3135,23 @@ int main(int argc, char **argv_orig, char **envp) {
 
     } while (skipped_fuzz && afl->queue_cur && !afl->stop_soon);
 
-    /* ， */
+    /* 负载均衡后续操作，清理恢复种子队列 */
 
     if (afl->fuzz_LB_seed) {
 
       /**
-       * 1.LB
-       * 2.
-       * 3.
+       * 1.删除LB种子
+       * 2.改名移动后续发现的种子
+       * 3.持久化后续发现的种子
        *
        */
 
       afl->fuzz_LB_seed = 0;  // end LB fuzzing
 
-      //  afl->LB_seed_id 。
-      // LB，
+      // 只有 afl->LB_seed_id 种子是强制添加的。
+      // LB种子理应不在子域内，不会进行种子选择
 
-      // ，
+      // 没发现属于自己簇内的种子，删除最后一个种子就好
       if (afl->LB_seed_id + 1 == afl->queued_items) {
 
         if (likely(afl->queue_buf[afl->LB_seed_id]->len > 4)) {
@@ -3168,7 +3163,7 @@ int main(int argc, char **argv_orig, char **envp) {
         struct queue_entry *q = afl->queue_buf[afl->LB_seed_id];
         if (q->tc_ref) {
           
-          /*  */          
+          /* 重置种子选择 */          
           for (u32 i = 0; i < afl->fsrv.map_size; ++i) {
 
             if (afl->top_rated[i] == q) {
@@ -3185,11 +3180,11 @@ int main(int argc, char **argv_orig, char **envp) {
         free_one_seed(afl->queue_buf[afl->LB_seed_id]);
         afl->queue_buf[afl->LB_seed_id] = NULL;
 
-        DCPF_LOG("only  LB  %u", afl->LB_seed_id);
+        DCPF_LOG("only 删除 LB 种子 %u", afl->LB_seed_id);
 
       } else {
 
-        //  LB 
+        // 删除 LB 种子
         if (likely(afl->queue_buf[afl->LB_seed_id]->len > 4)) {
 
           --afl->ready_for_splicing_count;
@@ -3199,7 +3194,7 @@ int main(int argc, char **argv_orig, char **envp) {
         struct queue_entry *q = afl->queue_buf[afl->LB_seed_id];
         if (q->tc_ref) {
           
-          /*  */          
+          /* 重置种子选择 */          
           for (u32 i = 0; i < afl->fsrv.map_size; ++i) {
 
             if (afl->top_rated[i] == q) {
@@ -3216,7 +3211,7 @@ int main(int argc, char **argv_orig, char **envp) {
         free_one_seed(afl->queue_buf[afl->LB_seed_id]);
         afl->queue_buf[afl->LB_seed_id] = NULL;
 
-        // ，
+        // 向前移动，并持久化
         u8  tmp[10];
         u32 cur = afl->LB_seed_id + 1;
         u32 count = 0;
@@ -3225,18 +3220,18 @@ int main(int argc, char **argv_orig, char **envp) {
           struct queue_entry *q = afl->queue_buf[cur];
           --q->id;
 
-          // 
-          char *id_ptr = strstr(q->fname, "id:");  //  id:
+          // 重命名
+          char *id_ptr = strstr(q->fname, "id:");  // 定位 id:
           if (!id_ptr) FATAL("id_ptr is NULL");
-          // id: 6，id_ptr + 3 
+          // id: 后紧跟6位数字，id_ptr + 3 是数字起点
           snprintf(tmp, sizeof(tmp), "%06u", q->id);  // 6 digits + \0
-          memcpy(id_ptr + 3, tmp, 6);  // ， \0
+          memcpy(id_ptr + 3, tmp, 6);  // 仅覆盖数字部分，不写入 \0
 
-          // 
+          // 移动
           afl->queue_buf[cur - 1] = q;
 
-          // 
-          // DCPF_LOG(" %s", q->fname);
+          // 持久化
+          // DCPF_LOG("写入磁盘 %s", q->fname);
           ++count;
           s32 fd = permissive_create(afl, q->fname);
           if (likely(fd >= 0)) {
@@ -3254,7 +3249,7 @@ int main(int argc, char **argv_orig, char **envp) {
 
         }
 
-        DCPF_LOG(" LB ,  %u ", count);
+        DCPF_LOG("删除 LB 种子, 持久化 %u 种子", count);
 
       }
 
@@ -3265,65 +3260,60 @@ int main(int argc, char **argv_orig, char **envp) {
 
     }
 
-    /*  */
+    /* 子域协同 */
 
     if (afl->is_secondary_node &&
         !if_coopqueue_empty(afl->redis_connect, afl->sd.id)) {
 
-      DCPF_LOG("，...");
+      DCPF_LOG("收到协同种子，进行子域协同...");
       do_cooperation(afl);
 
     }
 
-    /*  */
+    /* 检查增量计算距离 */
 
-    if (!atomic_load(&afl->cal_dist_matrix) &&
-        afl->queued_items > afl->dist_queue_buf_len) {
+    maybe_service_distance_matrix(afl);
 
-      inform_update_distance_matrix(afl);
-
-    }
-
-    /* ，， */
+    /* 先更新子域，同步新种子更新种子队列，再执行负载均衡任务 */
 
     if (afl->is_secondary_node) {
 
-      /*  */
+      /* 检查数据库更新子域 */
 
       if (if_need_update_subdomain(afl->redis_connect, afl->sync_id)) {
 
-        // 
+        // 有新任务需要更新
 
         u8 time_tmp[50];
         u_simplestring_time_diff(time_tmp, afl->prev_run_time + get_cur_time(),
                                  afl->start_time);
-        DCPF_LOG("  %s", time_tmp);
+        DCPF_LOG("更新子域 当前时间 %s", time_tmp);
 
-        // 
+        // 更新子域
         update_subdomain(afl);
 
-        // 
+        // 更新子域状态
         change_subdomain_state(afl->redis_connect, afl->sync_id, 0);
 
-        // 
+        // 同步所有任务区域
         DCPF_LOG("sync subdomains info from db");
         get_all_subdomain_from_db(afl->redis_connect, &afl->subdomain_array,
                                   &afl->subdomain_num);
 
-        // master
+        // 同步master发现的种子
         afl->sync_cursor = 0;
         sync_subdomain_seeds_from_db(afl, afl->sd.id);
 
-        // DCGF TODO: slave, ？
+        // DCGF TODO: 调度slave下的全局种子, 避免半径带来的遗漏？
 
-        // DCPF 
+        // DCPF 种子排序更新
         if (!afl->old_seed_selection) {
 
           afl->reinit_table = 1;
 
         } else {
 
-          // ，。！
+          // 超出，从头开始新轮。不建议！可能队尾种子饥饿
           afl->current_entry = afl->queued_items + 1;
 
         }
@@ -3333,13 +3323,13 @@ int main(int argc, char **argv_orig, char **envp) {
       }
 
       /**
-       * 
-       *    1. fuzz，
-       *       trim
-       *    2. 
-       *    3. master，
-       *    4. fuzz，（id），、
-       * 
+       * 执行负载均衡
+       *    1. 强制添加并fuzz负载均衡种子，上标记
+       *       负载均衡种子不进行trim
+       *    2. 期间只在内存不进行持久化
+       *    3. 新发现的种子先报告master一份，统计功劳
+       *    4. fuzz结束后删除调整种子队列，改名（id），再持久化、计算距离
+       * 禁用参数
        *    1. disable persistance, temp seed in memory
        *    2. disable energy adjust
        *    3. disable skip not favored seed
@@ -3359,12 +3349,12 @@ int main(int argc, char **argv_orig, char **envp) {
           afl->queue_cur = afl->queue_buf[afl->current_entry];
           afl->queue_cur->trim_done = 1;  // disable trim
 
-          DCPF_LOG(", fuzz seed#%u, total fuzz %u LB seeds",
+          DCPF_LOG("执行负载均衡任务, fuzz seed#%u, total fuzz %u LB seeds",
                    afl->LB_seed_id, afl->total_LB_add);
 
         } else {
 
-          // ，fuzz，
+          // 提取失败，正常下一个fuzz，跳过这个均衡任务
           afl->fuzz_LB_seed = 0;
 
         }
@@ -3433,6 +3423,8 @@ int main(int argc, char **argv_orig, char **envp) {
   }
 
 stop_fuzzing:
+
+  log_distance_summary(afl);
 
   for (u32 i = 0; i < afl->subdomain_num; i++) {
 
@@ -3583,4 +3575,3 @@ stop_fuzzing:
 }
 
 #endif                                                          /* !AFL_LIB */
-

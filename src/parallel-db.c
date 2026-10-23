@@ -46,17 +46,17 @@ DBq *get_one_db_seed(redisContext *connect, char *key) {
 
       WARNF("reply type error!");
       freeReplyObject(reply);
-      return NULL;  // ，HGETALL
+      return NULL;  // 处理错误，HGETALL的返回值应该是成对的键值
 
     } else {
 
-      /*  */
-      // 
+      /* 解析 */
+      // 检查元素数量
       if (reply->elements == 0) {
 
         WARNF("Key '%s' does not exist.", key);
         freeReplyObject(reply);
-        return NULL;  // key
+        return NULL;  // 处理key不存在的情况
 
       }
 
@@ -140,10 +140,10 @@ void free_dbq(DBq *dbq) {
 }
 
 /**
- * @description: 
+ * @description: 将一个簇的信息保存到数据库
  * @param {redisContext} *connect
  * @param {subdomain} *c
- * @param {u32} trace_len 
+ * @param {u32} trace_len 任务大小
  * @return {*}
  */
 void save_one_subdomain_to_db(redisContext *connect, char *instance_id,
@@ -190,13 +190,13 @@ void get_one_subdomain_from_db(redisContext *connect, subdomain *c,
 
     freeReplyObject(reply);
     FATAL("reply type error!");
-    return;  // ，HGETALL
+    return;  // 处理错误，HGETALL的返回值应该是成对的键值
 
   }
 
   if (reply->type == REDIS_REPLY_ARRAY) {
 
-    if (reply->elements == 0) {  // key
+    if (reply->elements == 0) {  // 根据元素个数检查key是否存在
       WARNF("Key subdomain_%s does not exist.", sync_id);
       freeReplyObject(reply);
       return;
@@ -216,7 +216,7 @@ void get_one_subdomain_from_db(redisContext *connect, subdomain *c,
 
         size_t db_trace_len = reply->element[i + 1]->len;
         // if (db_trace_len != trace_len) FATAL("read trace_mini error");
-        // 
+        // 质心分配内存
         if (!c->center)
           c->center =
               (struct queue_entry *)ck_alloc(sizeof(struct queue_entry));
@@ -246,7 +246,7 @@ void get_one_subdomain_from_db(redisContext *connect, subdomain *c,
 }
 
 /**
- * @description: helper function for set_worker_task.
+ * @description: helper function for set_worker_task.从数据库同步簇的信息
  * @param {redisContext} *connect
  * @param {subdomain} *
  * @param {u32} trace_len
@@ -258,13 +258,13 @@ void get_all_subdomain_from_db(redisContext *connect,
                                u32          *subdomain_num) {
 
   redisReply *reply = NULL;
-  u32         cursor = 0;  // SCAN
-  u32         count = 0;   // subdomain
+  u32         cursor = 0;  // SCAN初始游标
+  u32         count = 0;   // 记录匹配的subdomain数量
 
-  // // subdomain_num
+  // // 清空subdomain_num
   // *subdomain_num = 0;
 
-  // SCANsubdomain_*
+  // 使用SCAN命令遍历所有匹配subdomain_*的键
   do {
 
     // DCPF_DEBUG("SCAN %u MATCH subdomain_* COUNT 1000", cursor);
@@ -276,34 +276,34 @@ void get_all_subdomain_from_db(redisContext *connect,
 
     }
 
-    // 
+    // 更新游标
     cursor = strtoul(reply->element[0]->str, NULL, 10);
 
-    // 
+    // 遍历匹配的键
     redisReply *keys = reply->element[1];
     for (size_t i = 0; i < keys->elements; i++) {
 
       const char *key = keys->element[i]->str;
       const char *instance_name = key + strlen("subdomain_");
 
-      // subdomain_array
+      // 动态扩容subdomain_array
       *subdomain_array = (subdomain *)afl_realloc(
           (void **)subdomain_array, (count + 1) * sizeof(subdomain));
       if (!*subdomain_array) FATAL("afl_realloc error");
 
-      // HGETALLsubdomain
+      // 执行HGETALL命令获取subdomain数据
       get_one_subdomain_from_db(connect, &(*subdomain_array)[count],
                                 instance_name);
 
-      count++;  // subdomain
+      count++;  // 增加subdomain计数
 
     }
 
     freeReplyObject(reply);
 
-  } while (cursor != 0);  // 0
+  } while (cursor != 0);  // 当游标为0时结束遍历
 
-  // subdomain_num
+  // 设置subdomain_num为实际匹配的数量
   *subdomain_num = count;
   DCPF_DEBUG("TOTAL get %u subdomain", count);
 
@@ -313,7 +313,7 @@ bool if_coopqueue_empty(redisContext *connect, u32 subdomain_id) {
 
   bool ret = true;
 
-  //  LLEN 
+  // 使用 LLEN 命令检查队列长度
   redisReply *reply =
       (redisReply *)redisCommand(connect, "LLEN coop_queue_%u", subdomain_id);
 
@@ -324,7 +324,7 @@ bool if_coopqueue_empty(redisContext *connect, u32 subdomain_id) {
 
   }
 
-  // 
+  // 检查队列是否为空
   if (reply->integer == 0) {
 
     ret = true;
@@ -341,7 +341,7 @@ bool if_coopqueue_empty(redisContext *connect, u32 subdomain_id) {
 }
 
 /**
- * @description: 
+ * @description: 返回负载均衡队列种子数目
  * @param {redisContext} *connect
  * @param {u32} subdomain_id
  * @return {*}
@@ -350,7 +350,7 @@ long long get_LBqueue_size(redisContext *connect, u32 subdomain_id) {
 
   long long ret = -1;
 
-  //  LLEN 
+  // 使用 LLEN 命令检查队列长度
   redisReply *reply = (redisReply *)redisCommand(
       connect, "LLEN load_balance_queue_%u", subdomain_id);
 
@@ -397,7 +397,7 @@ bool if_in_subdomain(redisContext *connect, u32 subdomain_id, u8 *key,
 
   u32 db_subdomain_id = UINT32_MAX;
 
-  // Redis subdomain_id
+  // 从Redis获取 subdomain_id
   redisReply *reply = redisCommand(connect, "HGET %s subdomain_id", key);
   if (!reply) {
 
@@ -406,17 +406,17 @@ bool if_in_subdomain(redisContext *connect, u32 subdomain_id, u8 *key,
 
   }
 
-  if (reply->type == REDIS_REPLY_NIL) {  // key
+  if (reply->type == REDIS_REPLY_NIL) {  // 检查key是否存在
     *key_exist = false;
     freeReplyObject(reply);
     return false;
 
   }
 
-  // 
+  // 检查返回值是否是字符串类型
   if (reply->type == REDIS_REPLY_STRING) {
 
-    // 10，
+    // 基数为10，字符串转换为无符号整数
     db_subdomain_id = strtoul(reply->str, NULL, 10);
 
   } else {
@@ -448,7 +448,7 @@ u8 if_need_update_subdomain(redisContext *connect, char *sync_id) {
 
       WARNF("HGET subdomain_%s if_new_subdomain error!", sync_id);
 
-    } else if (reply->type == REDIS_REPLY_NIL) {  // KEY 
+    } else if (reply->type == REDIS_REPLY_NIL) {  // KEY 不存在
 
       DCPF_DEBUG("subdomain_%s not exist", sync_id);
       freeReplyObject(reply);

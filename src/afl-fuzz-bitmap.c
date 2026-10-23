@@ -487,7 +487,7 @@ u8 __attribute__((hot)) save_if_interesting(afl_state_t *afl, void *mem,
   double center_dist = 0.0;                      /* distance to self center */
   u8    *temp_trace_mini = NULL;
   u32    subdomain_assign = UINT32_MAX;
-  u8     calculated = 0;  // trace_mini
+  u8     calculated = 0;  // 不要重复计算距离和trace_mini
 
 #ifdef PATH_SIZE
   u8 aflfast = 0;
@@ -516,7 +516,7 @@ u8 __attribute__((hot)) save_if_interesting(afl_state_t *afl, void *mem,
   }
 
 #ifdef PATH_SIZE
-  // 
+  // 统计路径
   if (need_hash) {
 
     classify_counts(&afl->fsrv);
@@ -531,7 +531,7 @@ u8 __attribute__((hot)) save_if_interesting(afl_state_t *afl, void *mem,
 
 #endif
 
-  /*  */
+  /* 汇总频率信息 */
   // update_edge_freq(afl, afl->freq_map);
 
   if (likely(fault == afl->crash_mode)) {
@@ -559,17 +559,17 @@ u8 __attribute__((hot)) save_if_interesting(afl_state_t *afl, void *mem,
     }
 
     /**
-     * secondary_node ：
+     * secondary_node 种子来源：
      * 1. fuzz
-     *    ，; ，;
-     *    
-     * 2. 
-     *    ；；，
-     * 3. 
-     *    ，，
+     *    做协同，超出半径的自己不保留; 算偏移，半径内种子计算任务偏移;
+     *    在协同内更新半径
+     * 2. 协同
+     *    不做协同；算偏移；更新半径，返回后再更新任务半径
+     * 3. 均衡
+     *    不做协同，不算偏离，不更新半径
      *
-     * ：
-     * 1. afl->not_do_cooperation 
+     * 添加时开关参数：
+     * 1. afl->not_do_cooperation 不进行种子协同
      * 2. afl
      */
 
@@ -577,7 +577,7 @@ u8 __attribute__((hot)) save_if_interesting(afl_state_t *afl, void *mem,
 
     if (afl->is_secondary_node && afl->sd.center && !afl->not_do_cooperation) {
 
-      /* fuzz */
+      /* fuzz发现的种子 */
 
       /* if insteresting and the distance to current medoids > current
          cluster r, send to nearest medious */
@@ -596,12 +596,12 @@ u8 __attribute__((hot)) save_if_interesting(afl_state_t *afl, void *mem,
 
       if (center_dist > afl->sd.r) {
 
-        temp_min = center_dist;  // 
+        temp_min = center_dist;  // 先和自己比
 
         // select one worker to send
         for (u32 k = 0; k < afl->subdomain_num; k++) {
 
-          if (k == afl->sd.id) continue;  // 
+          if (k == afl->sd.id) continue;  // 跳过自己
 
           double dist_to_other = 0.0;
 
@@ -619,11 +619,11 @@ u8 __attribute__((hot)) save_if_interesting(afl_state_t *afl, void *mem,
 
         if (!send_to) {
 
-          DCPF_DEBUG("， %f -> %f", afl->sd.r,
+          DCPF_DEBUG("距离自己最近，调整任务半径 %f -> %f", afl->sd.r,
                      center_dist);
 
           afl->sd.r = temp_min;
-          // 
+          // 更新后的半径同步到数据库
           set_subdomain_radius(afl->redis_connect, afl->sync_id, afl->sd.r);
 
           // adjust seed into subdomain
@@ -635,7 +635,7 @@ u8 __attribute__((hot)) save_if_interesting(afl_state_t *afl, void *mem,
             if (!q->in_subdomain && q->center_deviation <= afl->sd.r) {
 
               q->in_subdomain = 1;
-              // DCPF_DEBUG(" seed #%u ", q->id);
+              // DCPF_DEBUG("调整半径 seed #%u 移动到任务内", q->id);
               ++count;
               decompress_trace_mini(afl->fsrv.trace_bits, q->trace_mini,
                                     afl->fsrv.map_size);
@@ -647,11 +647,11 @@ u8 __attribute__((hot)) save_if_interesting(afl_state_t *afl, void *mem,
 
           memcpy(afl->fsrv.trace_bits, afl->store_trace, afl->fsrv.map_size);
 
-          DCPF_DEBUG("：%u ", count);
+          DCPF_DEBUG("移动入任务：%u 种子", count);
 
         } else {
 
-          // master
+          // 功劳报告给master
           if (afl->fuzz_LB_seed) {
 
             redisReply *reply =
@@ -669,7 +669,7 @@ u8 __attribute__((hot)) save_if_interesting(afl_state_t *afl, void *mem,
 
           }
 
-          // redis
+          // 加入redis协同队列
           redisReply *reply =
               redisCommand(afl->redis_connect, "RPUSH coop_queue_%u %b",
                            send_to->id, mem, len);
@@ -685,7 +685,7 @@ u8 __attribute__((hot)) save_if_interesting(afl_state_t *afl, void *mem,
           ++afl->stat_collab_send;
 
           // ck_free(temp_trace_mini);
-          // return 0; // 
+          // return 0; // 本地不存储
 
         }
 
@@ -693,16 +693,16 @@ u8 __attribute__((hot)) save_if_interesting(afl_state_t *afl, void *mem,
 
     }
 
-    /* ，，，，
-        */
-    /* main_node ：fuzz、 */
+    /* 主实例，划分子域后，自己发现新种子时进行子域半径调整，并将其所属簇保存到数据库，
+       子实例从数据库进行同步 */
+    /* main_node 种子来源：fuzz、同步 */
 
     // if (afl->is_main_node && afl->subdomain_array &&
     // !afl->not_do_cooperation) {
 
     if (afl->is_main_node && afl->subdomain_array) {
 
-      // master，,，
+      // master给自己新发现的种子分到对应簇，打上簇标签,写入数据库，就会被并行实例同步
       calculated = 1;
 
       if (!temp_trace_mini)
@@ -724,7 +724,7 @@ u8 __attribute__((hot)) save_if_interesting(afl_state_t *afl, void *mem,
 
         }
 
-        // item，、
+        // 加入item队列，参与排序、负载均衡
         u32 n = ++afl->subdomain_array[k].size;
         afl->subdomain_array[k].items =
             afl_realloc((void **)&afl->subdomain_array[k].items,
@@ -733,7 +733,7 @@ u8 __attribute__((hot)) save_if_interesting(afl_state_t *afl, void *mem,
 
       }
 
-      // subdomain_array
+      // 对subdomain_array对应子域调整半径
       if (temp_min > afl->subdomain_array[subdomain_assign].r)
         afl->subdomain_array[subdomain_assign].r = temp_min;
 
@@ -793,11 +793,11 @@ u8 __attribute__((hot)) save_if_interesting(afl_state_t *afl, void *mem,
 
     }
 
-    /*  */
+    /* 主节点向数据库保存种子 */
 
     if (afl->is_main_node) {
 
-      // worker
+      // 同步的种子不再向worker同步
       if (afl->syncing_party) { afl->queue_top->not_sync = 1; }
 
       afl->queue_top->subdomain_id = subdomain_assign;
@@ -805,7 +805,7 @@ u8 __attribute__((hot)) save_if_interesting(afl_state_t *afl, void *mem,
 
     }
 
-    /* trace_mini  */
+    /* trace_mini 赋值 */
 
     if (calculated) {
 
@@ -818,7 +818,7 @@ u8 __attribute__((hot)) save_if_interesting(afl_state_t *afl, void *mem,
 
     }
 
-    /* client: */
+    /* client:有任务后新添加的种子计算任务偏离 */
 
     if (afl->is_secondary_node && afl->sd.center && !afl->not_cal_deviation) {
 
@@ -828,7 +828,7 @@ u8 __attribute__((hot)) save_if_interesting(afl_state_t *afl, void *mem,
         afl->queue_top->center_deviation = get_trace_mini_distance(
             afl, afl->sd.center->trace_mini, afl->queue_top->trace_mini);
 
-      // client ，，
+      // client 只要添加种子，就划定是否在子域内，以便种子选择
       if (afl->queue_top->center_deviation <= afl->sd.r)
         afl->queue_top->in_subdomain = 1;
 

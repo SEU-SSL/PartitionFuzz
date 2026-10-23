@@ -166,7 +166,6 @@ endif
 override CFLAGS += $(shell pkg-config --cflags glib-2.0)
 override LDFLAGS += $(shell pkg-config --libs glib-2.0)
 
-# override CFLAGS += -ggdb3 -O0 -Wall -Wextra $(CFLAGS_OPT)
 
 
 override CFLAGS += -g -Wno-pointer-sign -Wno-variadic-macros -Wall -Wextra -Wno-pointer-arith \

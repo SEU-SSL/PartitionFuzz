@@ -149,11 +149,8 @@ void afl_state_init(afl_state_t *afl, uint32_t map_size) {
 
   init_mopt_globals(afl);
 
-  afl->cal_dist_matrix = ATOMIC_VAR_INIT(false);
-  pthread_cond_init(&afl->dist_cond, NULL);
-
-  if (pthread_mutex_init(&afl->dist_cond_mutex, NULL) != 0)
-    FATAL("dist_cond_mutex initialization failed");
+  afl->dist_time_limit_us = DEFAULT_DISTANCE_TIME_LIMIT_US;
+  afl->dist_period_us = DEFAULT_DISTANCE_PERIOD_MS * 1000ULL;
 
   afl->max_potential = -DBL_MAX;
   afl->min_potential = DBL_MAX;
@@ -223,11 +220,31 @@ void afl_redis_init(afl_state_t *afl, const char *hostname, int port, int db) {
     } else {
 
       OKF("FLUSHDB %d", db);
-      freeReplyObject(reply);  // 
+      freeReplyObject(reply);  // 释放回复对象
 
     }
 
   }
+
+}
+
+static u64 parse_distance_time_env(char *name, u64 default_value,
+                                   u64 max_value) {
+
+  char *value = get_afl_env(name);
+  char *endptr;
+
+  errno = 0;
+  unsigned long long parsed = strtoull(value, &endptr, 10);
+  if (errno || endptr == value || *endptr || !parsed || parsed > max_value) {
+
+    WARNF("Invalid value for %s; using default %llu", name,
+          (unsigned long long)default_value);
+    return default_value;
+
+  }
+
+  return (u64)parsed;
 
 }
 
@@ -345,6 +362,23 @@ void read_afl_environment(afl_state_t *afl, char **envp) {
 
             afl->afl_env.afl_dumb_forksrv =
                 get_afl_env(afl_environment_variables[i]) ? 1 : 0;
+
+          } else if (!strncmp(env, "AFL_DISTANCE_TIME_LIMIT_US",
+
+                              afl_environment_variable_len)) {
+
+            afl->dist_time_limit_us = parse_distance_time_env(
+                afl_environment_variables[i], DEFAULT_DISTANCE_TIME_LIMIT_US,
+                UINT_MAX);
+
+          } else if (!strncmp(env, "AFL_DISTANCE_PERIOD_MS",
+
+                              afl_environment_variable_len)) {
+
+            u64 period_ms = parse_distance_time_env(
+                afl_environment_variables[i], DEFAULT_DISTANCE_PERIOD_MS,
+                UINT_MAX);
+            afl->dist_period_us = period_ms * 1000ULL;
 
           } else if (!strncmp(env, "AFL_IMPORT_FIRST",
 
@@ -827,9 +861,6 @@ void afl_state_deinit(afl_state_t *afl) {
   ck_free(afl->first_trace);
   ck_free(afl->map_tmp_buf);
 
-  pthread_cond_destroy(&afl->dist_cond);
-  pthread_mutex_destroy(&afl->dist_cond_mutex);
-
   if (afl->dist_queue_buf) afl_free(afl->dist_queue_buf);
   if (afl->select_queue_buf) afl_free(afl->select_queue_buf);
 
@@ -902,8 +933,6 @@ void afl_states_stop(void) {
 
     }
 
-    pthread_cond_broadcast(&el->dist_cond);
-
   });
 
 }
@@ -919,4 +948,3 @@ void afl_states_request_skip(void) {
   LIST_FOREACH(&afl_states, afl_state_t, { el->skip_requested = 1; });
 
 }
-
